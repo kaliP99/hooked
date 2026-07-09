@@ -1063,7 +1063,7 @@ function updateMediaSession(t){
 
 /* ---------- keyboard (desktop) ---------- */
 document.addEventListener("keydown", e => {
-  if (e.target.matches("input") || !store.onboarded) return;
+  if (e.target.matches("input, textarea") || !store.onboarded) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp"){
     e.preventDefault();
     const i = [...feed.children].indexOf(current);
