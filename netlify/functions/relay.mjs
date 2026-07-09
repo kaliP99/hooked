@@ -1,7 +1,7 @@
 // Tiny same-site relay for playlist imports — fetches allowed hosts server-side
 // and returns the body with CORS open. Locked to an allowlist so it can't be
 // abused as an open proxy.
-const ALLOWED = new Set(["open.spotify.com", "www.youtube.com", "music.youtube.com", "youtube.com"]);
+const ALLOWED = new Set(["open.spotify.com", "www.youtube.com", "music.youtube.com", "youtube.com", "itunes.apple.com"]);
 
 export default async (req) => {
   const target = new URL(req.url).searchParams.get("url");
@@ -24,6 +24,8 @@ export default async (req) => {
         "Access-Control-Allow-Origin": "*",
         "Content-Type": r.headers.get("content-type") || "text/html",
         "Cache-Control": "public, max-age=300",
+        // cache identical queries at Netlify's edge so repeat searches never hit the upstream
+        "Netlify-CDN-Cache-Control": "public, durable, max-age=600",
       },
     });
   } catch (e) {

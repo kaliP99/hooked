@@ -704,6 +704,18 @@ function jsonp(url){
     document.head.appendChild(s);
   });
 }
+// direct Apple call first — each user's own IP gets its own rate allowance. If the
+// network blocks it (mobile carriers share one rate-limited IP across thousands of
+// users), fall back automatically to our Netlify relay, which is edge-cached.
+async function itunesGet(url){
+  try { return await jsonp(url); }
+  catch(e){
+    const r = await fetch("/relay?url=" + encodeURIComponent(url), { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw e;
+    return await r.json();
+  }
+}
+
 // iTunes has an unofficial ~20 req/min cap. Cache each term (10 min) and back off on failure.
 const seedCache = new Map();   // key -> { tracks, ts }
 let backoffUntil = 0;
@@ -713,7 +725,7 @@ async function searchTracks(term, limit = 25){
   if (hit && Date.now() - hit.ts < 600000) return hit.tracks;
   if (Date.now() < backoffUntil) throw new Error("rate-limit backoff");
   try {
-    const d = await jsonp(`https://itunes.apple.com/search?media=music&entity=song&limit=${limit}&term=${encodeURIComponent(term)}`);
+    const d = await itunesGet(`https://itunes.apple.com/search?media=music&entity=song&limit=${limit}&term=${encodeURIComponent(term)}`);
     const tracks = (d.results || []).filter(t => t.previewUrl);
     seedCache.set(key, { tracks, ts: Date.now() });
     if (seedCache.size > 80) seedCache.delete(seedCache.keys().next().value);   // simple LRU-ish cap
@@ -781,7 +793,7 @@ async function sharedSong(){
   if (!id) return null;
   history.replaceState(null, "", location.pathname);   // don't re-pin it on refresh
   try {
-    const d = await jsonp(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}`);
+    const d = await itunesGet(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}`);
     return (d.results || []).find(x => x.previewUrl) || null;
   } catch(e){ return null; }
 }
