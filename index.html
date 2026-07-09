@@ -6,15 +6,15 @@
 <meta name="theme-color" content="#0b0b0d">
 <meta name="description" content="Hooked — hear the best 20 seconds of every song. Swipe to discover music.">
 <title>Hooked — discover music in seconds</title>
-<!-- update og:url and og:image to absolute URLs once the domain is live -->
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://hookedmusic.netlify.app/">
 <meta property="og:title" content="Hooked — discover music in seconds">
 <meta property="og:description" content="Hear the best 20 seconds of every song. Swipe to discover music you'll love.">
-<meta property="og:image" content="icon-512.png">
+<meta property="og:image" content="https://hookedmusic.netlify.app/icon-512.png">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Hooked — discover music in seconds">
 <meta name="twitter:description" content="Hear the best 20 seconds of every song. Swipe to discover music you'll love.">
-<meta name="twitter:image" content="icon-512.png">
+<meta name="twitter:image" content="https://hookedmusic.netlify.app/icon-512.png">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
@@ -182,7 +182,10 @@
     background:var(--glass); border:1px solid var(--glass-border); backdrop-filter:blur(16px);
     transition:background .2s, transform .2s; }
   .topbtn:hover{ background:rgba(255,255,255,.13); transform:scale(1.06); }
-  #topR{ display:flex; gap:10px; }
+  #topR{ display:flex; gap:10px; align-items:center; }
+  #volWrap{ display:flex; align-items:center; gap:8px; }
+  #volSlider{ width:0; opacity:0; accent-color:var(--accent); transition:width .25s, opacity .25s; }
+  #volWrap.open #volSlider{ width:92px; opacity:1; }
 
   /* ---------- sheets ---------- */
   .sheet{ position:fixed; inset:0; z-index:20; background:rgba(11,11,13,.82); backdrop-filter:blur(24px);
@@ -339,6 +342,10 @@
 <div id="top">
   <button id="logo" title="Refresh &amp; re-read your taste">Hooked<em>.</em></button>
   <div id="topR">
+    <div id="volWrap">
+      <input type="range" id="volSlider" min="0" max="100" aria-label="Volume">
+      <button class="topbtn" id="volBtn" title="Volume" aria-label="Volume">🔊</button>
+    </div>
     <button class="topbtn" id="searchBtn" title="Search" aria-label="Search">⌕</button>
     <button class="topbtn" id="profileBtn" title="Your profile" aria-label="Your profile">👤</button>
   </div>
@@ -378,6 +385,8 @@
   <label class="toggle"><input type="checkbox" id="origOnly"> Only original songs — hide covers &amp; remixes</label>
   <div class="listhead" style="margin-left:0">Vibe right now</div>
   <div id="moodRow" class="moodrow"></div>
+  <div class="listhead" style="margin-left:0">Language right now</div>
+  <div id="langRow" class="moodrow"></div>
   <div class="list" id="profileList"></div>
   <div class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · Previews courtesy of Apple Music</div>
 </div>
@@ -416,6 +425,8 @@ const store = JSON.parse(localStorage.getItem("hooked") || "null") || {
 };
 store.tasteSeeds ||= []; store.searchLiked ||= []; store.interactions ||= 0; store.playlists ||= [];
 store.recentlyPlayed ||= []; store.originalsOnly ??= false;
+store.prefs ||= { genres:[], langs:[], eras:[] };   // raw onboarding answers — drive combined seeds
+store.volume ??= 100;
 const haptic = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch(_){} };
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 
@@ -439,25 +450,36 @@ const COVERISH = /\b(karaoke|cover|tribute|originally performed|made famous by|i
 const REMIXISH = /\b(remix|mashup|bootleg|flip|sped up|slowed|reverb|nightcore)\b/i;
 const normTitle = n => String(n||"").toLowerCase().replace(/\(.*?\)|\[.*?\]/g,"").replace(/feat\.?.*$/,"").replace(/[^a-z0-9]/g,"");
 const likedTitles = new Set(store.liked.map(t => normTitle(t.trackName)));
+const skippedTitles = new Set();   // quick-skipped this session → not interested in that song's variants
+const shownTitles = new Set();     // titles already fed this session
+const artistStrikes = {};          // 2 quick-skips of an artist this session → bench them
 function rejectTrack(t){
+  const nt = normTitle(t.trackName);
+  if (skippedTitles.has(nt)) return true;                       // they told us no — stop offering versions of it
+  if ((artistStrikes[t.artistName]||0) >= 2) return true;       // artist benched until a positive signal
+  if (store.originalsOnly && shownTitles.has(nt)) return true;  // originals only: one version per session, ever
   const isCoverish = COVERISH.test(t.trackName) || REMIXISH.test(t.trackName);
   if (!isCoverish) return false;
   if (store.originalsOnly) return true;                    // profile toggle: originals only
-  if (likedTitles.has(normTitle(t.trackName))) return true; // don't show covers/remixes of a song they liked
+  if (likedTitles.has(nt)) return true;                    // don't show covers/remixes of a song they liked
   return false;
 }
 
 /* ---------- learning engine ---------- */
 // ponytail: weighted keyword scores in localStorage; a collaborative-filtering
 // backend replaces this when there is more than one user.
-const SIGNALS = { relisten:5, follow:4, like:3, continue:2.5, save:2, share:2, fullListen:1.5, quickSkip:-2, skip:-.3 };
+const SIGNALS = { relisten:5, follow:4, like:3, continue:2.5, save:2, share:2, fullListen:1.5, bgListen:.4, quickSkip:-2, skip:-.3 };
 function learn(track, signal){
   const lr = store.interactions < 30 ? 1.8 : 1;          // taste locks in fast early
   const w = (SIGNALS[signal] || 0) * lr;
   for (const m of [store.genres, store.artists]) for (const k in m) m[k] *= .995;  // gentle decay
   bump(store.genres, track.primaryGenreName, w);
   bump(store.artists, track.artistName, w * 1.3);
-  if (w > 0) store.interactions++;
+  if (w > 0){   // any positive signal = renewed interest, clear session benches
+    store.interactions++;
+    artistStrikes[track.artistName] = 0;
+    skippedTitles.delete(normTitle(track.trackName));
+  }
   save();
 }
 function topKeys(map, n){
@@ -483,23 +505,66 @@ const MOODS = {
   "🎉 Party":["party anthems","club hits"], "🌧 Melancholy":["sad songs","melancholy indie"]
 };
 const TRENDING = ["top hits 2026","viral hits","new music friday","trending songs","fresh finds"];
+// root words for combining onboarding answers into real search terms ("punjabi 90s hits")
+const ROOTS = {
+  lang:{ "English":"english","Hindi":"hindi","Punjabi":"punjabi","Spanish":"spanish","Korean":"korean","Tamil":"tamil",
+    "Telugu":"telugu","Arabic":"arabic","French":"french","Japanese":"japanese","Portuguese":"brazilian","Afrobeats":"afrobeats" },
+  genre:{ "Pop":"pop","Hip-Hop":"hip hop","Rock":"rock","Indie":"indie","Electronic":"edm","R&B":"rnb","Bollywood":"bollywood",
+    "Punjabi":"punjabi","K-Pop":"kpop","Latin":"latin","Country":"country","Lo-fi":"lofi" },
+  era:{ "Fresh 2020s":"2025","2010s":"2010s","2000s":"2000s","90s":"90s","Timeless":"classic" }
+};
+// cross-combine the onboarding answers (language x era, language x genre, era x genre)
+function buildComboSeeds(){
+  const L = store.prefs.langs.map(l => ROOTS.lang[l]).filter(Boolean);
+  const G = store.prefs.genres.map(g => ROOTS.genre[g]).filter(Boolean);
+  const E = store.prefs.eras.map(e => ROOTS.era[e]).filter(Boolean);
+  const combos = [];
+  for (const l of L){
+    for (const e of E) combos.push(`${l} ${e} hits`);
+    for (const g of G) if (g !== l) combos.push(`${l} ${g} songs`);
+  }
+  for (const g of G) for (const e of E) combos.push(`${e} ${g} hits`);
+  store.tasteSeeds = [...new Set([...store.tasteSeeds, ...combos.sort(() => Math.random() - .5).slice(0, 24)])];
+  save();
+}
+// existing profiles predate store.prefs — recover the answers from their seeds once
+if (store.onboarded && !store.prefs.langs.length && !store.prefs.genres.length && !store.prefs.eras.length){
+  for (const [label, seed] of Object.entries(LANGS)) if (store.tasteSeeds.includes(seed)) store.prefs.langs.push(label);
+  for (const [label, seed] of Object.entries(ERAS)) if (store.tasteSeeds.includes(seed)) store.prefs.eras.push(label);
+  for (const [label, seeds] of Object.entries(GENRES)) if (seeds.some(s => store.tasteSeeds.includes(s))) store.prefs.genres.push(label);
+  if (store.prefs.langs.length || store.prefs.genres.length) buildComboSeeds();
+}
 let mood = null;
+let langLock = null;   // session language lock — "only hindi songs right now"
 let reassess = 0;   // when >0, next seeds pull fresh/random songs to re-read the user (logo tap)
 
 function nextSeed(){
   const n = store.interactions;
+  // when the user picked languages, ~75% of generic terms get language-scoped —
+  // otherwise English-biased seeds ("viral hits") drown out the picks.
+  // a session langLock scopes EVERY term to that one language.
+  const langRoots = langLock ? [ROOTS.lang[langLock]] : store.prefs.langs.map(l => ROOTS.lang[l]).filter(Boolean);
+  const langify = t => {
+    if (langLock){   // hard lock: convert seeds of other languages, prefix the rest
+      const root = ROOTS.lang[langLock];
+      for (const r of Object.values(ROOTS.lang)) if (r !== root) t = t.replace(r, root);
+      return t.includes(root) ? t : root + " " + t;
+    }
+    return (!langRoots.length || langRoots.some(r => t.includes(r)) || Math.random() > .75)
+      ? t : pick(langRoots) + " " + t;
+  };
   // priority: artists the user searched-then-liked, then followed, then top-scored taste
   const learned = [
     ...store.searchLiked.slice(-4),
     ...store.followed.slice(-4),
     ...topKeys(store.artists, 5),
-    ...topKeys(store.genres, 3).map(g => g.split("/")[0] + " hits"),
+    ...topKeys(store.genres, 3).map(g => langify(g.split("/")[0].toLowerCase() + " hits")),
   ].filter(Boolean);
-  const explore = [...store.tasteSeeds, ...(mood ? MOODS[mood] : []), ...TRENDING];
+  const explore = [...store.tasteSeeds.map(langify), ...(mood ? MOODS[mood].map(langify) : []), ...TRENDING.map(langify)];
   const h = new Date().getHours();
-  explore.push(h < 9 || h > 22 ? "late night chill" : h > 17 ? "evening hits" : "feel good hits");
+  explore.push(langify(h < 9 || h > 22 ? "late night chill" : h > 17 ? "evening hits" : "feel good hits"));
 
-  if (reassess > 0){ reassess--; return pick([...TRENDING, "discover", "new music", ...store.tasteSeeds.slice(0,3)]); }
+  if (reassess > 0){ reassess--; return pick([...TRENDING.map(langify), langify("new songs"), ...store.tasteSeeds.slice(0,3)]); }
   // bootstrap window: lean on onboarding + fresh/random to understand the user
   if (n < BOOTSTRAP) return Math.random() < .55 ? pick(explore) : pick(learned.length ? learned : explore);
   // steady state: a blend — ~2/3 "more like what you liked" to re-verify taste,
@@ -553,11 +618,15 @@ async function refillOnce(){
   fetching = true; let added = 0;
   try {
     const tracks = await searchTracks(nextSeed());
-    const perArtist = {};   // cap one artist per batch so no creator floods the feed
+    const perArtist = {}, perTitle = {};   // cap per batch: no artist floods, no duplicate titles
+    // artists get more feed slots only once the user has shown real interest in them
+    const interestedIn = a => store.followed.includes(a) || store.searchLiked.includes(a) || (store.artists[a]||0) > 2;
     for (const t of tracks.sort(() => Math.random() - .5)){
       if (seen.has(t.trackId) || rejectTrack(t)) continue;
+      const nt = normTitle(t.trackName);
       perArtist[t.artistName] = (perArtist[t.artistName]||0) + 1;
-      if (perArtist[t.artistName] > 3) continue;
+      perTitle[nt] = (perTitle[nt]||0) + 1;
+      if (perArtist[t.artistName] > (interestedIn(t.artistName) ? 3 : 1) || perTitle[nt] > 1) continue;
       seen.add(t.trackId); queue.push(t); added++;
     }
     store.seen = [...seen].slice(-800); save();
@@ -698,6 +767,7 @@ function action(a, t, btn){
     if (i >= 0){ store.liked.splice(i,1); likedTitles.delete(normTitle(t.trackName)); btn.classList.remove("on"); }
     else {
       store.liked.unshift(slim); likedTitles.add(normTitle(t.trackName));
+      skippedTitles.delete(normTitle(t.trackName));
       btn.classList.add("on"); learn(t, "like"); toast("Liked ♥"); haptic(12);
       if (fromSearch) prioritizeSearch(t);
     }
@@ -732,12 +802,15 @@ function prioritizeSearch(t){
   save(); toast("More like " + t.artistName + " coming up");
 }
 
-// don't show the same creator back-to-back — defer a track if its artist is in the last few shown
-const recentArtists = [];
+// no same creator back-to-back, and same/similar titles spaced well apart
+const recentArtists = [], recentTitles = [];
 function takeDiverse(){
-  for (let i = 0; i < queue.length; i++)
-    if (!recentArtists.includes(queue[i].artistName)) return queue.splice(i, 1)[0];
-  return queue.shift();   // everything left is the same artist — allow it
+  for (let i = 0; i < queue.length; i++){
+    const q = queue[i];
+    if (!recentArtists.includes(q.artistName) && !recentTitles.includes(normTitle(q.trackName)))
+      return queue.splice(i, 1)[0];
+  }
+  return queue.shift();   // everything left conflicts — allow rather than stall
 }
 let sinceAd = 0, adN = 0;
 function appendCards(n = 4){
@@ -746,6 +819,9 @@ function appendCards(n = 4){
     if (!t) break;
     recentArtists.push(t.artistName);
     if (recentArtists.length > 4) recentArtists.shift();
+    recentTitles.push(normTitle(t.trackName));
+    if (recentTitles.length > 6) recentTitles.shift();
+    shownTitles.add(normTitle(t.trackName));
     feed.appendChild(makeCard(t));
     if (ADS.enabled && ++sinceAd >= ADS.feedEvery){ sinceAd = 0; feed.appendChild(makeAdCard()); }
   }
@@ -794,7 +870,13 @@ function playCard(el){
   if (current){
     if (current._track){
       const dur = (Date.now() - playStart) / 1000;
-      learn(current._track, dur < 4 ? "quickSkip" : dur > 15 ? "fullListen" : "skip");
+      // background listening is passive — they may be AFK, so a full play only counts as a small like
+      const sig = dur < 4 ? "quickSkip" : dur > 15 ? (document.hidden ? "bgListen" : "fullListen") : "skip";
+      learn(current._track, sig);
+      if (sig === "quickSkip"){   // stop offering versions of it, strike the artist
+        skippedTitles.add(normTitle(current._track.trackName));
+        artistStrikes[current._track.artistName] = (artistStrikes[current._track.artistName]||0) + 1;
+      }
     }
     current.classList.remove("playing","paused");
   }
@@ -809,7 +891,10 @@ function playCard(el){
     return;
   }
   // scrolling back to a song already heard = they wanted to hear it again → strong like
-  if (playHistory.includes(el._track.trackId)) learn(el._track, "relisten");
+  if (playHistory.includes(el._track.trackId)){
+    learn(el._track, "relisten");
+    skippedTitles.delete(normTitle(el._track.trackName));   // renewed interest overrides an earlier skip
+  }
   playHistory.push(el._track.trackId);
 
   current = el; continued = false; playStart = Date.now();
@@ -934,7 +1019,7 @@ function renderProfile(){
     (store.searchLiked.length ? `<br>Chasing: ${esc(store.searchLiked.slice(0,3).join(", "))}` : "");
   $("#learnFill").style.width = Math.min(100, n / BOOTSTRAP * 100) + "%";
   $("#origOnly").checked = store.originalsOnly;
-  renderMoodRow();
+  renderMoodRow(); renderLangRow();
 
   const el = $("#profileList"); el.innerHTML = "";
   if (store.liked.length){ el.appendChild(plHead("♥ Liked", store.liked)); store.liked.forEach(t => el.appendChild(rowFor(t))); }
@@ -951,20 +1036,28 @@ function renderProfile(){
   if (!store.liked.length && !store.playlists.some(p => p.tracks.length) && !store.recentlyPlayed.length)
     el.insertAdjacentHTML("beforeend", `<div class="empty">Like some songs and they'll show up here</div>`);
 }
-// mid-session vibe switch — takes effect on the next songs queued
-function renderMoodRow(){
-  const mr = $("#moodRow"); mr.innerHTML = "";
-  Object.keys(MOODS).forEach(m => {
+// mid-session switches — take effect on the next songs queued
+function chipRow(elId, options, getSel, setSel, label){
+  const row = $(elId); row.innerHTML = "";
+  options.forEach(o => {
     const b = document.createElement("button");
-    b.className = "chip" + (m === mood ? " sel" : "");
-    b.textContent = m;
+    b.className = "chip" + (o === getSel() ? " sel" : "");
+    b.textContent = o;
     b.onclick = () => {
-      mood = (mood === m) ? null : m;
-      queue = []; recentArtists.length = 0;   // clear so the new vibe kicks in fast
-      renderMoodRow(); toast(mood ? "Vibe: " + mood : "Vibe cleared"); ensureAhead();
+      setSel(getSel() === o ? null : o);
+      queue = []; recentArtists.length = 0;   // clear so the switch kicks in fast
+      renderMoodRow(); renderLangRow();
+      toast(getSel() ? label + ": " + getSel() : label + " cleared");
+      ensureAhead();
     };
-    mr.appendChild(b);
+    row.appendChild(b);
   });
+}
+function renderMoodRow(){ chipRow("#moodRow", Object.keys(MOODS), () => mood, v => mood = v, "Vibe"); }
+// user's onboarding languages first, then the rest
+function renderLangRow(){
+  const ordered = [...store.prefs.langs, ...Object.keys(LANGS).filter(l => !store.prefs.langs.includes(l))];
+  chipRow("#langRow", ordered, () => langLock, v => langLock = v, "Language");
 }
 function plHead(title, tracks, onDelete){
   const h = document.createElement("div");
@@ -1091,6 +1184,19 @@ function playPlaylist(tracks, shuffle){
 }
 
 /* ---------- sheets / toast / utils ---------- */
+/* ---------- volume (note: iOS ignores element volume — hardware buttons rule there) ---------- */
+player.volume = store.volume / 100;
+const volIcon = v => v === 0 ? "🔇" : v < 50 ? "🔉" : "🔊";
+$("#volBtn").textContent = volIcon(store.volume);
+$("#volSlider").value = store.volume;
+$("#volBtn").onclick = () => $("#volWrap").classList.toggle("open");
+$("#volSlider").oninput = e => {
+  store.volume = +e.target.value;
+  player.volume = store.volume / 100;
+  $("#volBtn").textContent = volIcon(store.volume);
+  save();
+};
+
 function closeSheets(){ document.querySelectorAll(".sheet").forEach(s => s.classList.remove("open")); }
 $("#searchBtn").onclick  = () => { closeSheets(); $("#searchSheet").classList.add("open"); $("#searchInput").focus(); };
 $("#profileBtn").onclick = () => { closeSheets(); renderProfile(); $("#profileSheet").classList.add("open"); };
@@ -1134,13 +1240,21 @@ function renderStep(){
 }
 $("#startNext").onclick = async () => {
   if (step < LAST){
-    if (step === 0)      for (const g of picked[0]){ bump(store.genres, ITUNES_GENRE[g], 6); store.tasteSeeds.push(...GENRES[g]); }
-    else if (step === 1) for (const l of picked[1]) store.tasteSeeds.push(LANGS[l]);
-    else if (step === 2) for (const e of picked[2]) store.tasteSeeds.push(ERAS[e]);
+    if (step === 0){
+      store.prefs.genres = [...picked[0]];
+      for (const g of picked[0]){ bump(store.genres, ITUNES_GENRE[g], 6); store.tasteSeeds.push(...GENRES[g]); }
+    } else if (step === 1){
+      store.prefs.langs = [...picked[1]];
+      for (const l of picked[1]) store.tasteSeeds.push(LANGS[l]);
+    } else if (step === 2){
+      store.prefs.eras = [...picked[2]];
+      for (const e of picked[2]) store.tasteSeeds.push(ERAS[e]);
+    }
     store.tasteSeeds = [...new Set(store.tasteSeeds)]; save();
     step++; renderStep(); refillOnce(); return;
   }
   mood = [...picked[LAST]][0];
+  buildComboSeeds();   // cross-combine every answer: language x era x genre
   store.onboarded = true; save();
   $("#start").classList.add("hide");
   bootFeed();
