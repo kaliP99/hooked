@@ -188,6 +188,7 @@
   #volWrap{ display:flex; align-items:center; gap:8px; }
   #volSlider{ width:0; opacity:0; accent-color:var(--accent); transition:width .25s, opacity .25s; }
   #volWrap.open #volSlider{ width:92px; opacity:1; }
+  @media (max-width:430px){ #volWrap.open #volSlider{ width:58px; } }   /* don't push buttons off narrow screens */
 
   /* ---------- sheets ---------- */
   .sheet{ position:fixed; inset:0; z-index:20; background:rgba(11,11,13,.82); backdrop-filter:blur(24px);
@@ -213,13 +214,17 @@
   #boot b em{ font-style:normal; color:var(--accent); }
   @keyframes bootpulse{ 50%{ opacity:.4; transform:scale(.97); } }
 
-  /* phosphor icon sizing inside our components */
-  .ic i{ font-size:23px; display:block; }
-  .topbtn i{ font-size:18px; display:block; }
-  .continue i{ font-size:15px; vertical-align:-2px; margin-right:2px; }
-  .shuffle i, .plh-del i{ font-size:14px; vertical-align:-2px; }
+  /* phosphor icon sizing inside our components — line-height:0 on the circle,
+     line-height:1 on the glyph keeps every icon dead-centre */
+  .ic, .topbtn, .rowx{ line-height:0; }
+  .ic i, .topbtn i, .rowx i{ line-height:1; display:block; }
+  .ic i{ font-size:23px; }
+  .topbtn i{ font-size:18px; }
+  .rowx i{ font-size:14px; }
+  .continue, .shuffle, .plh-del{ display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+  .continue i{ font-size:15px; }
+  .shuffle i, .plh-del i{ font-size:14px; line-height:1; }
   .row > i{ font-size:16px; color:var(--txt-faint); flex-shrink:0; }
-  .rowx i{ font-size:13px; display:block; }
   .off-emoji i{ font-size:46px; color:var(--accent-soft); }
   .sheet h2{ font-size:22px; font-weight:700; letter-spacing:-.03em; margin-bottom:16px; display:flex;
     justify-content:space-between; align-items:center; }
@@ -247,8 +252,8 @@
     transition:background .2s, color .2s; }
   .rowx:hover{ color:#fff; background:rgba(230,69,90,.3); border-color:rgba(230,69,90,.4); }
   .row img{ width:52px; height:52px; border-radius:10px; }
-  .row .ph{ width:52px; height:52px; border-radius:10px; display:grid; place-items:center; font-size:20px;
-    background:var(--glass); border:1px solid var(--glass-border); }
+  .row .phold{ width:52px; height:52px; border-radius:10px; display:grid; place-items:center; font-size:20px;
+    flex-shrink:0; background:var(--glass); border:1px solid var(--glass-border); }
   .row .rt{ min-width:0; flex:1; }
   .row .rt b{ display:block; font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row .rt span{ font-size:13px; color:var(--txt-dim); }
@@ -378,8 +383,8 @@
   #impBar.hide{ opacity:0; }
   #impBar i{ display:block; height:3px; width:0;
     background:linear-gradient(90deg,var(--accent),var(--accent-soft)); transition:width .4s; }
-  #impBar span{ position:absolute; top:10px; left:50%; transform:translateX(-50%); white-space:nowrap;
-    font-size:12px; font-weight:600; padding:6px 14px; border-radius:999px; color:#fff;
+  #impBar span{ position:absolute; top:calc(env(safe-area-inset-top) + 62px); left:50%; transform:translateX(-50%);
+    white-space:nowrap; font-size:12px; font-weight:600; padding:6px 14px; border-radius:999px; color:#fff;
     background:rgba(20,20,26,.85); border:1px solid var(--glass-border); backdrop-filter:blur(16px); }
 
   #toast{ position:fixed; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px); z-index:40;
@@ -1200,7 +1205,7 @@ $("#searchInput").addEventListener("input", e => {
 function rowFor(t, onRemove){
   const b = document.createElement("div");
   b.className = "row"; b.setAttribute("role", "button"); b.tabIndex = 0;
-  const img = t.artworkUrl100 ? `<img src="${t.artworkUrl100}" alt="">` : `<span class="ph">♫</span>`;
+  const img = t.artworkUrl100 ? `<img src="${t.artworkUrl100}" alt="">` : `<span class="phold">♫</span>`;
   b.innerHTML = `${img}<div class="rt"><b>${esc(t.trackName)}</b><span>${esc(t.artistName)}</span></div><i class="ph-fill ph-play"></i>`;
   b.onclick = () => { closeSheets(); playNow(t); };
   if (onRemove){
@@ -1561,7 +1566,7 @@ function renderPlPicker(){
     const has = pl.tracks.some(x => x.trackId === pendingTrack.trackId);
     const b = document.createElement("button");
     b.className = "row";
-    b.innerHTML = `<span class="ph">${has ? "✓" : "♫"}</span><div class="rt"><b>${esc(pl.name)}</b><span>${pl.tracks.length} songs</span></div>`;
+    b.innerHTML = `<span class="phold">${has ? "✓" : "♫"}</span><div class="rt"><b>${esc(pl.name)}</b><span>${pl.tracks.length} songs</span></div>`;
     b.onclick = () => toggleInPlaylist(idx);
     el.appendChild(b);
   });
