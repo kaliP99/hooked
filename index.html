@@ -23,6 +23,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <style>
   :root{
     --bg:#0b0b0d;
@@ -189,16 +191,36 @@
 
   /* ---------- sheets ---------- */
   .sheet{ position:fixed; inset:0; z-index:20; background:rgba(11,11,13,.82); backdrop-filter:blur(24px);
-    display:flex; flex-direction:column; padding:calc(env(safe-area-inset-top) + 20px) 20px 20px;
+    display:flex; flex-direction:column; padding:calc(env(safe-area-inset-top) + 26px) 20px 20px;
     transform:translateY(100%); transition:transform .35s cubic-bezier(.2,.8,.2,1); }
+  .sheet::before{ content:""; position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    width:40px; height:4px; border-radius:2px; background:rgba(255,255,255,.18); }
   .sheet.open{ transform:translateY(0); }
   @media (min-width:820px){
     .sheet{ inset:auto; top:50%; left:50%; width:480px; height:min(78vh,680px);
       transform:translate(-50%,-50%) scale(.95); opacity:0; pointer-events:none;
       border-radius:24px; border:1px solid var(--glass-border); padding:24px;
       box-shadow:0 40px 120px rgba(6,4,10,.9); transition:transform .3s, opacity .3s; }
+    .sheet::before{ display:none; }
     .sheet.open{ transform:translate(-50%,-50%) scale(1); opacity:1; pointer-events:auto; }
   }
+
+  /* boot loader — shown between "start listening" and the first playing card */
+  #boot{ position:fixed; inset:0; z-index:15; display:grid; place-items:center; background:var(--bg);
+    transition:opacity .4s; }
+  #boot.hide{ opacity:0; pointer-events:none; }
+  #boot b{ font-size:36px; font-weight:800; letter-spacing:-.04em; animation:bootpulse 1.2s ease-in-out infinite; }
+  #boot b em{ font-style:normal; color:var(--accent); }
+  @keyframes bootpulse{ 50%{ opacity:.4; transform:scale(.97); } }
+
+  /* phosphor icon sizing inside our components */
+  .ic i{ font-size:23px; display:block; }
+  .topbtn i{ font-size:18px; display:block; }
+  .continue i{ font-size:15px; vertical-align:-2px; margin-right:2px; }
+  .shuffle i, .plh-del i{ font-size:14px; vertical-align:-2px; }
+  .row > i{ font-size:16px; color:var(--txt-faint); flex-shrink:0; }
+  .rowx i{ font-size:13px; display:block; }
+  .off-emoji i{ font-size:46px; color:var(--accent-soft); }
   .sheet h2{ font-size:22px; font-weight:700; letter-spacing:-.03em; margin-bottom:16px; display:flex;
     justify-content:space-between; align-items:center; }
   .sheet h2 button{ font-size:14px; font-weight:500; color:var(--txt-dim); padding:6px 14px; border-radius:999px;
@@ -383,13 +405,13 @@
 <div id="top">
   <button id="logo" title="Refresh &amp; re-read your taste">Hooked<em>.</em></button>
   <div id="topR">
-    <button class="topbtn" id="dailyBtn" title="Daily discoveries" aria-label="Daily discoveries">✦</button>
+    <button class="topbtn" id="dailyBtn" title="Daily discoveries" aria-label="Daily discoveries"><i class="ph ph-sparkle"></i></button>
     <div id="volWrap">
       <input type="range" id="volSlider" min="0" max="100" aria-label="Volume">
-      <button class="topbtn" id="volBtn" title="Volume" aria-label="Volume">🔊</button>
+      <button class="topbtn" id="volBtn" title="Volume" aria-label="Volume"><i class="ph ph-speaker-high"></i></button>
     </div>
-    <button class="topbtn" id="searchBtn" title="Search" aria-label="Search">⌕</button>
-    <button class="topbtn" id="profileBtn" title="Your profile" aria-label="Your profile">👤</button>
+    <button class="topbtn" id="searchBtn" title="Search" aria-label="Search"><i class="ph ph-magnifying-glass"></i></button>
+    <button class="topbtn" id="profileBtn" title="Your profile" aria-label="Your profile"><i class="ph ph-user"></i></button>
   </div>
 </div>
 
@@ -399,9 +421,11 @@
 <aside class="siderail" id="adLeft"><div class="slot">Ad space<br>200×400</div></aside>
 <aside class="siderail" id="adRight"><div class="slot">Ad space<br>200×400</div></aside>
 
+<div id="boot" class="hide"><b>Hooked<em>.</em></b></div>
+
 <div id="offline" class="hide">
   <div class="off-card">
-    <div class="off-emoji">📡</div>
+    <div class="off-emoji"><i class="ph ph-wifi-slash"></i></div>
     <b>Can't reach the music library</b>
     <p>Apple's catalogue didn't respond. Check your connection and try again.</p>
     <button id="retryBtn">Retry</button>
@@ -763,10 +787,12 @@ async function sharedSong(){
 }
 // single entry point for first load + retry
 async function bootFeed(){
+  $("#boot").classList.remove("hide");   // pulsing logo while the first songs load
   const shared = await sharedSong();
   await refillOnce(); appendCards(5); await ensureAhead();
   if (shared){ seen.add(shared.trackId); feed.prepend(makeCard(shared)); }
   const first = feed.firstElementChild;
+  $("#boot").classList.add("hide");
   if (first){ showOffline(false); playCard(first); }
   else showOffline(true);
 }
@@ -803,7 +829,7 @@ function makeCard(t){
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
-        <button class="continue">▶ Continue listening</button>
+        <button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>
         <div class="links">
           <span>Full song</span>
           <a class="yt" href="${L.yt}" target="_blank" rel="noopener">YouTube</a>
@@ -815,11 +841,11 @@ function makeCard(t){
       <div class="progress"></div>
     </div>
     <div class="rail">
-      <button class="act ${isLiked ? "on" : ""}" data-a="like"><span class="ic">♥</span>Like</button>
-      <button class="act ${isSaved ? "on" : ""}" data-a="save"><span class="ic">✚</span>Save</button>
-      <button class="act ${isFollowed ? "on" : ""}" data-a="follow"><span class="ic">★</span>Follow</button>
-      <button class="act" data-a="more"><span class="ic">♬</span>More</button>
-      <button class="act" data-a="share"><span class="ic">↗</span>Share</button>
+      <button class="act ${isLiked ? "on" : ""}" data-a="like"><span class="ic"><i class="ph-fill ph-heart"></i></span>Like</button>
+      <button class="act ${isSaved ? "on" : ""}" data-a="save"><span class="ic"><i class="ph ph-list-plus"></i></span>Save</button>
+      <button class="act ${isFollowed ? "on" : ""}" data-a="follow"><span class="ic"><i class="ph ph-user-plus"></i></span>Follow</button>
+      <button class="act" data-a="more"><span class="ic"><i class="ph ph-waveform"></i></span>More</button>
+      <button class="act" data-a="share"><span class="ic"><i class="ph ph-paper-plane-tilt"></i></span>Share</button>
     </div>`;
   el._track = t;
 
@@ -837,7 +863,9 @@ function makeCard(t){
   });
   el.querySelector(".continue").onclick = e => {
     continued = true; learn(t, "continue");
-    e.target.classList.add("on"); e.target.textContent = "♪ Playing full preview";
+    const btn = e.target.closest(".continue");
+    btn.classList.add("on");
+    btn.innerHTML = '<i class="ph ph-waveform"></i> Playing full preview';
     if (player.paused) player.play();
   };
   el.querySelector(".links").onclick = e => {   // wanting the full song = they like it
@@ -870,9 +898,15 @@ function doubleTapLike(el, t){
   requestAnimationFrame(() => h.classList.add("go"));
   setTimeout(() => h.remove(), 800);
 }
+// springy bounce on the tapped rail icon — feedback you can feel
+const popIc = btn => btn?.querySelector(".ic")?.animate(
+  [{ transform:"scale(1)" }, { transform:"scale(1.35)" }, { transform:"scale(1)" }],
+  { duration:320, easing:"cubic-bezier(.2,.8,.2,1)" });
+
 function action(a, t, btn){
   const slim = slimTrack(t);
   const fromSearch = searchPlayed.has(t.trackId);
+  popIc(btn);
   if (a === "like"){
     const i = store.liked.findIndex(x => x.trackId === t.trackId);
     if (i >= 0){ store.liked.splice(i,1); likedTitles.delete(normTitle(t.trackName)); btn.classList.remove("on"); }
@@ -957,6 +991,30 @@ function appendCards(n = 4){
     feed.appendChild(makeCard(t));
     if (ADS.enabled && ++sinceAd >= ADS.feedEvery){ sinceAd = 0; feed.appendChild(makeAdCard()); }
   }
+  // every ~300 signals, one gentle backup nudge — never while backgrounded or winding down
+  if (store.interactions - (store.lastBackupNudge || 0) >= 300 && !document.hidden && !sleepT){
+    store.lastBackupNudge = store.interactions; save();
+    feed.appendChild(makeBackupCard());
+  }
+}
+
+function makeBackupCard(){
+  const el = document.createElement("div");
+  el.className = "card ad"; el._ad = true; el._stay = true;   // stays until the user moves on
+  el.innerHTML = `
+    <div class="ambient"></div>
+    <div class="reel">
+      <div class="ad-tag">Your taste, backed up</div>
+      <div class="ad-body">
+        <div class="off-emoji"><i class="ph ph-download-simple"></i></div>
+        <b>${store.interactions} signals of pure you</b>
+        <p>Your taste profile lives only on this device. Export it now — and if you ever reset, switch phones, or clear your browser, use "Merge user" in your profile to bring it all back.</p>
+        <button class="ad-cta">Export my profile</button>
+      </div>
+      <div class="ad-skip">swipe to keep listening ↑</div>
+    </div>`;
+  el.querySelector(".ad-cta").onclick = () => { exportProfile(); next(); };
+  return el;
 }
 
 function makeAdCard(){
@@ -1013,12 +1071,14 @@ function playCard(el){
     current.classList.remove("playing","paused");
   }
   clearTimeout(adTimer);
-  if (el._ad){   // ad card: pause music, show for 6s, move on
+  if (el._ad){   // ad/notice card: pause music; ads auto-advance, notices wait for the user
     current = el; player.pause();
-    const p = el.querySelector(".progress");
-    p.style.transition = "width 6s linear";
-    requestAnimationFrame(() => p.style.width = "100%");
-    adTimer = setTimeout(next, 6000);
+    if (!el._stay){
+      const p = el.querySelector(".progress");
+      p.style.transition = "width 6s linear";
+      requestAnimationFrame(() => p.style.width = "100%");
+      adTimer = setTimeout(next, 6000);
+    }
     ensureAhead();
     return;
   }
@@ -1129,11 +1189,11 @@ function rowFor(t, onRemove){
   const b = document.createElement("div");
   b.className = "row"; b.setAttribute("role", "button"); b.tabIndex = 0;
   const img = t.artworkUrl100 ? `<img src="${t.artworkUrl100}" alt="">` : `<span class="ph">♫</span>`;
-  b.innerHTML = `${img}<div class="rt"><b>${esc(t.trackName)}</b><span>${esc(t.artistName)}</span></div><span>▶</span>`;
+  b.innerHTML = `${img}<div class="rt"><b>${esc(t.trackName)}</b><span>${esc(t.artistName)}</span></div><i class="ph-fill ph-play"></i>`;
   b.onclick = () => { closeSheets(); playNow(t); };
   if (onRemove){
     const x = document.createElement("button");
-    x.className = "rowx"; x.textContent = "✕"; x.title = "Remove from playlist"; x.setAttribute("aria-label", "Remove song");
+    x.className = "rowx"; x.innerHTML = '<i class="ph ph-x"></i>'; x.title = "Remove from playlist"; x.setAttribute("aria-label", "Remove song");
     x.onclick = e => { e.stopPropagation(); onRemove(); };
     b.appendChild(x);
   }
@@ -1217,16 +1277,16 @@ function plSection(title, tracks, onDelete){
   const actions = document.createElement("div");
   actions.className = "plh-actions plsec-actions";
   const sh = document.createElement("button");
-  sh.className = "shuffle"; sh.textContent = "⤮ Shuffle";
+  sh.className = "shuffle"; sh.innerHTML = '<i class="ph ph-shuffle"></i> Shuffle';
   sh.onclick = () => playPlaylist(tracks, true);
   actions.appendChild(sh);
   const ex = document.createElement("button");
-  ex.className = "plh-del"; ex.textContent = "⇪ Export"; ex.title = "Export to Spotify / YT Music / Apple";
+  ex.className = "plh-del"; ex.innerHTML = '<i class="ph ph-export"></i> Export'; ex.title = "Export to Spotify / YT Music / Apple";
   ex.onclick = () => exportTracks(title.replace(/[^\w\s]/g, "").trim() || "playlist", tracks);
   actions.appendChild(ex);
   if (onDelete){
     const del = document.createElement("button");
-    del.className = "plh-del"; del.textContent = "🗑"; del.title = "Delete playlist"; del.setAttribute("aria-label", "Delete playlist");
+    del.className = "plh-del"; del.innerHTML = '<i class="ph ph-trash"></i>'; del.title = "Delete playlist"; del.setAttribute("aria-label", "Delete playlist");
     del.onclick = onDelete;
     actions.appendChild(del);
   }
@@ -1436,12 +1496,13 @@ $("#importRun").onclick = () => {
 };
 
 /* export / merge / reset */
-$("#exportBtn").onclick = () => {
+function exportProfile(){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(store,null,2)], { type:"application/json" }));
   a.download = "hooked-profile.json"; a.click(); URL.revokeObjectURL(a.href);
   toast("Profile exported");
-};
+}
+$("#exportBtn").onclick = exportProfile;
 $("#mergeInput").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -1570,14 +1631,14 @@ function renderSleepRow(){
 
 /* ---------- volume (note: iOS ignores element volume — hardware buttons rule there) ---------- */
 player.volume = store.volume / 100;
-const volIcon = v => v === 0 ? "🔇" : v < 50 ? "🔉" : "🔊";
-$("#volBtn").textContent = volIcon(store.volume);
+const volIcon = v => `<i class="ph ph-speaker-${v === 0 ? "x" : v < 50 ? "low" : "high"}"></i>`;
+$("#volBtn").innerHTML = volIcon(store.volume);
 $("#volSlider").value = store.volume;
 $("#volBtn").onclick = () => $("#volWrap").classList.toggle("open");
 $("#volSlider").oninput = e => {
   store.volume = +e.target.value;
   player.volume = store.volume / 100;
-  $("#volBtn").textContent = volIcon(store.volume);
+  $("#volBtn").innerHTML = volIcon(store.volume);
   save();
 };
 
@@ -1600,8 +1661,10 @@ function toast(msg){
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
 
 /* ---------- onboarding (bootstraps the first ~18 songs, then taste takes over) ---------- */
+const GENRE_ICONS = { "Pop":"🎤","Hip-Hop":"🎧","Rock":"🎸","Indie":"🌙","Electronic":"⚡","R&B":"💫",
+  "Bollywood":"🎬","Punjabi":"🥁","K-Pop":"🌸","Latin":"💃","Country":"🤠","Lo-fi":"☕" };
 const STEPS = [
-  { q:"What do you listen to?", sub:"Pick a few — this only seeds your first songs while we learn the real you.", options:Object.keys(GENRES), multi:true },
+  { q:"What do you listen to?", sub:"Pick a few — this only seeds your first songs while we learn the real you.", options:Object.keys(GENRES), multi:true, icons:GENRE_ICONS },
   { q:"Which languages?", sub:"We'll play music in the languages you pick.", options:Object.keys(LANGS), multi:true },
   { q:"Which eras hit hardest?", sub:"Pick one or more.", options:Object.keys(ERAS), multi:true },
   { q:"Bring your playlists", sub:"Paste a public Spotify or YouTube playlist link (or songs as text) — we'll learn your taste instantly. Or skip.", type:"import" },
@@ -1626,7 +1689,7 @@ function renderStep(){
   }
   s.options.forEach(o => {
     const b = document.createElement("button");
-    b.className = "chip"; b.textContent = o;
+    b.className = "chip"; b.textContent = s.icons?.[o] ? s.icons[o] + " " + o : o;
     b.onclick = () => {
       if (!s.multi){ picked[step].clear(); box.querySelectorAll(".chip").forEach(c => c.classList.remove("sel")); }
       picked[step].has(o) ? (picked[step].delete(o), b.classList.remove("sel")) : (picked[step].add(o), b.classList.add("sel"));
