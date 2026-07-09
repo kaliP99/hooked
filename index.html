@@ -277,6 +277,9 @@
   .start-legal{ position:absolute; bottom:calc(env(safe-area-inset-bottom) + 16px); left:0; right:0; }
   .moodrow{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
   .moodrow .chip{ padding:8px 14px; font-size:14px; }
+  .sleepInp{ width:110px; padding:8px 14px; border-radius:999px; font:inherit; font-size:14px; color:#fff;
+    background:var(--glass); border:1px solid var(--glass-border); outline:none; }
+  .sleepInp:focus{ border-color:var(--accent); }
 
   /* double-tap-to-like heart */
   .heart-pop{ position:absolute; left:50%; top:44%; z-index:4; font-size:130px; color:var(--accent);
@@ -406,8 +409,8 @@
 
 <div class="sheet" id="importSheet">
   <h2>Import songs <button data-close>Close</button></h2>
-  <p class="imp-hint">Paste songs from Spotify or YouTube Music, one per line ("Song - Artist"). In Spotify: select the playlist's tracks and copy. First 20 lines are matched.</p>
-  <textarea id="importText" placeholder="Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa&#10;..."></textarea>
+  <p class="imp-hint">Paste a public Spotify or YouTube playlist link — or songs as text, one per line ("Song - Artist").</p>
+  <textarea id="importText" placeholder="https://open.spotify.com/playlist/...&#10;or&#10;Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa"></textarea>
   <button id="importRun">Import</button>
   <div class="empty" id="importStatus" style="margin-top:14px"></div>
 </div>
@@ -480,6 +483,8 @@ function rejectTrack(t){
   if ((artistStrikes[t.artistName]||0) >= 2) return true;       // artist benched until a positive signal
   // compilation releases ("Various Artists") carry generic compilation artwork, not the song's real cover
   if ((t.collectionArtistName || "").toLowerCase().includes("various")) return true;
+  // active language locks: only tracks confirmed to match one of the locked languages
+  if (langLocks.length && !langLocks.some(l => langMatches(t, l))) return true;
   if (store.originalsOnly && shownTitles.has(nt)) return true;  // originals only: one version per session, ever
   const isCoverish = COVERISH.test(t.trackName) || REMIXISH.test(t.trackName);
   if (!isCoverish) return false;
@@ -558,20 +563,48 @@ if (store.onboarded && !store.prefs.langs.length && !store.prefs.genres.length &
   if (store.prefs.langs.length || store.prefs.genres.length) buildComboSeeds();
 }
 let mood = null;
-let langLock = null;   // session language lock — "only hindi songs right now"
+let langLocks = [];   // session language locks (multi) — "only hindi + punjabi right now"
 let reassess = 0;   // when >0, next seeds pull fresh/random songs to re-read the user (logo tap)
+
+// iTunes has no language parameter — this is the real filter: Apple's regional
+// genre names + native-script detection. Strict by design: unproven tracks drop.
+const LANG_MATCH = {
+  "Hindi":{ g:["bollywood","indian","hindi","sufi","ghazal","devotional","filmi","soundtrack"], s:/[ऀ-ॿ]/ },
+  "Punjabi":{ g:["punjabi","bhangra","indian"], s:/[਀-੿]/ },
+  "Tamil":{ g:["tamil","kollywood","indian","soundtrack"], s:/[஀-௿]/ },
+  "Telugu":{ g:["telugu","tollywood","indian","soundtrack"], s:/[ఀ-౿]/ },
+  "Korean":{ g:["k-pop","korean"], s:/[가-힯ᄀ-ᇿ]/ },
+  "Japanese":{ g:["j-pop","japanese","anime"], s:/[぀-ヿ]/ },
+  "Spanish":{ g:["latin","reggaeton","salsa","banda","urbano","flamenco","mexico","méxico","español","espanol"], s:null },
+  "Arabic":{ g:["arabic","khaleeji","rai"], s:/[؀-ۿ]/ },
+  "French":{ g:["french","chanson","francophone"], s:null },
+  "Portuguese":{ g:["brazilian","mpb","sertanejo","samba","bossa","pagode","forro","forró"], s:null },
+  "Afrobeats":{ g:["afro","african"], s:null },
+  "English":{ g:null, s:null }   // english = not identifiably any other language
+};
+function langMatches(t, lang){
+  const m = LANG_MATCH[lang];
+  if (!m) return true;
+  const genre = (t.primaryGenreName || "").toLowerCase();
+  const text = t.trackName + " " + t.artistName + " " + (t.collectionName || "");
+  if (lang === "English")
+    return !Object.entries(LANG_MATCH).some(([l, x]) => l !== "English" &&
+      ((x.g && x.g.some(k => genre.includes(k))) || (x.s && x.s.test(text))));
+  return (m.g && m.g.some(k => genre.includes(k))) || (m.s && m.s.test(text));
+}
 
 function nextSeed(){
   const n = store.interactions;
   // when the user picked languages, ~75% of generic terms get language-scoped —
   // otherwise English-biased seeds ("viral hits") drown out the picks.
-  // a session langLock scopes EVERY term to that one language.
-  const langRoots = langLock ? [ROOTS.lang[langLock]] : store.prefs.langs.map(l => ROOTS.lang[l]).filter(Boolean);
+  // session langLocks scope EVERY term to one of the locked languages.
+  const lockRoots = langLocks.map(l => ROOTS.lang[l]).filter(Boolean);
+  const langRoots = lockRoots.length ? lockRoots : store.prefs.langs.map(l => ROOTS.lang[l]).filter(Boolean);
   const langify = t => {
-    if (langLock){   // hard lock: convert seeds of other languages, prefix the rest
-      const root = ROOTS.lang[langLock];
-      for (const r of Object.values(ROOTS.lang)) if (r !== root) t = t.replace(r, root);
-      return t.includes(root) ? t : root + " " + t;
+    if (lockRoots.length){   // hard lock: convert seeds of other languages, prefix the rest
+      const root = pick(lockRoots);
+      for (const r of Object.values(ROOTS.lang)) if (!lockRoots.includes(r)) t = t.replace(r, root);
+      return lockRoots.some(r => t.includes(r)) ? t : root + " " + t;
     }
     return (!langRoots.length || langRoots.some(r => t.includes(r)) || Math.random() > .75)
       ? t : pick(langRoots) + " " + t;
@@ -728,7 +761,7 @@ function makeCard(t){
         <div class="artist ${isFollowed ? "followed" : ""}">${esc(t.artistName)}</div>
         <div class="tags">
           <span class="tag">${esc(t.primaryGenreName || "Music")}</span>
-          ${langLock ? `<span class="tag mood">🌐 ${langLock}</span>` : ""}
+          ${langLocks.length ? `<span class="tag mood">🌐 ${langLocks.join(" / ")}</span>` : ""}
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
@@ -838,14 +871,19 @@ function copyShare(d){
   if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast("Link copied")).catch(() => toast(txt));
   else toast("Link copied");
 }
+// drop the queue and every unplayed card — the next swipe reflects the new steering
+function resetUpcoming(){
+  queue = []; recentArtists.length = 0;
+  while (current && current.nextElementSibling){ io.unobserve(current.nextElementSibling); current.nextElementSibling.remove(); }
+}
+
 // one-tap "more like this" — steer the feed toward this song's sound right now
 function moreLikeThis(t){
   store.searchLiked = [...new Set([t.artistName, ...store.searchLiked])].slice(0, 12);
   bump(store.artists, t.artistName, 3);
   bump(store.genres, t.primaryGenreName, 1.5);
   save(); haptic(12);
-  queue = []; recentArtists.length = 0;
-  while (current && current.nextElementSibling){ io.unobserve(current.nextElementSibling); current.nextElementSibling.remove(); }
+  resetUpcoming();
   toast("More like " + t.artistName + " coming up");
   ensureAhead();
 }
@@ -1093,32 +1131,38 @@ function renderProfile(){
     el.insertAdjacentHTML("beforeend", `<div class="empty">Like some songs and they'll show up here</div>`);
 }
 // mid-session switches — take effect on the next songs queued
-function chipRow(elId, options, getSel, setSel, label){
-  const row = $(elId); row.innerHTML = "";
-  options.forEach(o => {
+function renderMoodRow(){
+  const row = $("#moodRow"); row.innerHTML = "";
+  Object.keys(MOODS).forEach(o => {
     const b = document.createElement("button");
-    b.className = "chip" + (o === getSel() ? " sel" : "");
+    b.className = "chip" + (o === mood ? " sel" : "");
     b.textContent = o;
     b.onclick = () => {
-      setSel(getSel() === o ? null : o);
-      queue = []; recentArtists.length = 0;
-      // drop every unplayed card too — the very next swipe is already the new filter
-      while (current && current.nextElementSibling){
-        io.unobserve(current.nextElementSibling);
-        current.nextElementSibling.remove();
-      }
-      renderMoodRow(); renderLangRow();
-      toast(getSel() ? label + ": " + getSel() : label + " cleared");
+      mood = mood === o ? null : o;
+      resetUpcoming(); renderMoodRow();
+      toast(mood ? "Vibe: " + mood : "Vibe cleared");
       ensureAhead();
     };
     row.appendChild(b);
   });
 }
-function renderMoodRow(){ chipRow("#moodRow", Object.keys(MOODS), () => mood, v => mood = v, "Vibe"); }
-// user's onboarding languages first, then the rest
+// multi-select — songs come from ANY of the locked languages; clear all = filter off
 function renderLangRow(){
   const ordered = [...store.prefs.langs, ...Object.keys(LANGS).filter(l => !store.prefs.langs.includes(l))];
-  chipRow("#langRow", ordered, () => langLock, v => langLock = v, "Language");
+  const row = $("#langRow"); row.innerHTML = "";
+  ordered.forEach(o => {
+    const b = document.createElement("button");
+    b.className = "chip" + (langLocks.includes(o) ? " sel" : "");
+    b.textContent = o;
+    b.onclick = () => {
+      const i = langLocks.indexOf(o);
+      i >= 0 ? langLocks.splice(i, 1) : langLocks.push(o);
+      resetUpcoming(); renderLangRow();
+      toast(langLocks.length ? "Language: " + langLocks.join(", ") : "Language filter cleared");
+      ensureAhead();
+    };
+    row.appendChild(b);
+  });
 }
 function plHead(title, tracks, onDelete){
   const h = document.createElement("div");
@@ -1172,8 +1216,71 @@ function parseSongLines(text){
                .replace(/\s*[-–—•|]\s*/g, " ")     // separators → spaces for search
                .replace(/\s{2,}/g, " "));
 }
+// ponytail: playlist links are read via public CORS proxies + page scraping —
+// works today, can break if Spotify/YouTube change markup; paste-import is the fallback.
+async function fetchViaProxy(url){
+  const proxies = [
+    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+    u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  ];
+  for (const p of proxies){
+    try {
+      const r = await fetch(p(url), { signal: AbortSignal.timeout(15000) });
+      if (r.ok){ const txt = await r.text(); if (txt.length > 500) return txt; }
+    } catch(e){}
+  }
+  throw new Error("proxy");
+}
+function extractPlaylistLines(html, kind){
+  const unesc = s => { try { return JSON.parse('"' + s + '"'); } catch(e){ return s; } };
+  if (kind === "spotify"){
+    const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!m) return [];
+    try {
+      const j = JSON.parse(m[1]);
+      const list = j.props?.pageProps?.state?.data?.entity?.trackList || [];
+      return list.map(x => `${x.title} ${x.subtitle || ""}`.trim()).filter(Boolean);
+    } catch(e){ return []; }
+  }
+  // youtube — two markups in the wild: legacy playlistVideoRenderer and current lockupViewModel
+  const cleanTitle = s => unesc(s).replace(/\(.*?\)|\[.*?\]/g, " ")
+    .replace(/official|music video|full video|lyrical?|lyrics|audio|4k|hd|\|/gi, " ");
+  const legacy = html.split('"playlistVideoRenderer"').slice(1).map(seg => {
+    const ti = seg.match(/"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    if (!ti) return null;
+    const by = seg.match(/"shortBylineText":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    const artist = by ? unesc(by[1]).replace(/\s*-\s*topic$/i, "") : "";
+    return (cleanTitle(ti[1]) + " " + artist).replace(/\s{2,}/g, " ").trim();
+  }).filter(Boolean);
+  if (legacy.length) return legacy;
+  return html.split('"lockupMetadataViewModel":{').slice(1).map(seg => {
+    const ti = seg.match(/^"title":\{"content":"((?:[^"\\]|\\.)*)"/);
+    if (!ti) return null;
+    const by = seg.match(/"Go to channel ((?:[^"\\]|\\.)*)"/);
+    const artist = by ? unesc(by[1]).replace(/\s*-\s*topic$/i, "") : "";
+    return (cleanTitle(ti[1]) + " " + artist).replace(/\s{2,}/g, " ").trim();
+  }).filter(Boolean);
+}
+async function linesFromInput(text){
+  const url = (text.match(/https?:\/\/\S+/) || [])[0];
+  if (!url) return parseSongLines(text);
+  const sp = url.match(/spotify\.com\/(?:[\w-]+\/)?(playlist|album)\/([A-Za-z0-9]+)/);
+  if (sp){
+    const html = await fetchViaProxy(`https://open.spotify.com/embed/${sp[1]}/${sp[2]}`);
+    return extractPlaylistLines(html, "spotify").slice(0, 30);
+  }
+  const yt = url.match(/[?&]list=([\w-]+)/);
+  if (yt){
+    const html = await fetchViaProxy(`https://www.youtube.com/playlist?list=${yt[1]}`);
+    return extractPlaylistLines(html, "youtube").slice(0, 30);
+  }
+  throw new Error("unsupported link");
+}
 async function importSongs(text, onProgress){
-  const lines = parseSongLines(text);
+  let lines;
+  try { lines = await linesFromInput(text); }
+  catch(e){ return { matched:0, total:0, linkFail:true }; }
+  if (!lines.length) return { matched:0, total:0, linkFail: /https?:\/\//.test(text) };
   let matched = 0;
   for (let i = 0; i < lines.length; i++){
     onProgress?.(matched, lines.length, i + 1);
@@ -1189,15 +1296,17 @@ async function importSongs(text, onProgress){
         matched++;
       }
     } catch(e){ break; }                           // hit the backoff — keep what we got
-    await new Promise(r => setTimeout(r, 1000));   // stay under Apple's ~20/min
+    await new Promise(r => setTimeout(r, 1500));   // stay near Apple's ~20/min
   }
   save();
   return { matched, total: lines.length };
 }
 async function runImport(text, progress){
+  if (/https?:\/\//.test(text)) progress("Reading playlist link…");
   const res = await importSongs(text, (m, tot, i) => progress(`Matching song ${i} of ${tot} — ${m} found…`));
   progress(res.matched ? `Imported ${res.matched} of ${res.total} songs ♥ Your feed already knows you.`
-                       : "Couldn't match those — use one song per line, like: Song - Artist");
+         : res.linkFail ? "Couldn't read that link — make sure the playlist is public, or paste the songs as text instead"
+                        : "Couldn't match those — use one song per line, like: Song - Artist");
   return res;
 }
 
@@ -1323,7 +1432,7 @@ $("#dailyBtn").onclick = async () => {
   for (const s of seeds){ try { tracks.push(...await searchTracks(s, 12)); } catch(e){} }
   const fresh = tracks
     .filter((t, i, a) => a.findIndex(x => x.trackId === t.trackId) === i)   // dedupe, but re-showing is fine for a daily drop
-    .filter(t => !COVERISH.test(t.trackName) && !REMIXISH.test(t.trackName))
+    .filter(t => !rejectTrack(t))   // honors language locks, covers, benched artists
     .slice(0, 20);
   if (!fresh.length) return toast("Couldn't load today's drop — try again");
   [...feed.children].forEach(c => { io.unobserve(c); c.remove(); });
@@ -1335,21 +1444,27 @@ $("#dailyBtn").onclick = async () => {
 
 /* ---------- sleep timer (session-only) ---------- */
 let sleepT = null, sleepSel = null;
+function armSleep(min){
+  clearTimeout(sleepT); sleepT = null;
+  sleepSel = min > 0 ? min + " min" : null;
+  if (min > 0) sleepT = setTimeout(() => { player.pause(); sleepSel = null; renderSleepRow(); toast("Sleep timer: music paused 😴"); }, min * 60000);
+  renderSleepRow();
+  toast(sleepSel ? "Music stops in " + sleepSel : "Sleep timer off");
+}
 function renderSleepRow(){
   const row = $("#sleepRow"); row.innerHTML = "";
   ["15 min","30 min","60 min"].forEach(o => {
     const b = document.createElement("button");
     b.className = "chip" + (o === sleepSel ? " sel" : "");
     b.textContent = o;
-    b.onclick = () => {
-      sleepSel = sleepSel === o ? null : o;
-      clearTimeout(sleepT);
-      if (sleepSel) sleepT = setTimeout(() => { player.pause(); sleepSel = null; renderSleepRow(); toast("Sleep timer: music paused 😴"); }, parseInt(sleepSel) * 60000);
-      renderSleepRow();
-      toast(sleepSel ? "Music stops in " + sleepSel : "Sleep timer off");
-    };
+    b.onclick = () => armSleep(o === sleepSel ? 0 : parseInt(o));
     row.appendChild(b);
   });
+  const inp = document.createElement("input");
+  inp.type = "number"; inp.min = 1; inp.max = 720; inp.placeholder = "custom min";
+  inp.className = "sleepInp"; inp.setAttribute("aria-label", "Custom sleep minutes");
+  inp.onkeydown = e => { if (e.key === "Enter" && +inp.value > 0) armSleep(Math.min(720, +inp.value)); };
+  row.appendChild(inp);
 }
 
 /* ---------- volume (note: iOS ignores element volume — hardware buttons rule there) ---------- */
@@ -1382,7 +1497,7 @@ const STEPS = [
   { q:"What do you listen to?", sub:"Pick a few — this only seeds your first songs while we learn the real you.", options:Object.keys(GENRES), multi:true },
   { q:"Which languages?", sub:"We'll play music in the languages you pick.", options:Object.keys(LANGS), multi:true },
   { q:"Which eras hit hardest?", sub:"Pick one or more.", options:Object.keys(ERAS), multi:true },
-  { q:"Bring your playlists", sub:"Paste songs from Spotify or YouTube Music, one per line — we'll learn your taste instantly. Or skip.", type:"import" },
+  { q:"Bring your playlists", sub:"Paste a public Spotify or YouTube playlist link (or songs as text) — we'll learn your taste instantly. Or skip.", type:"import" },
   { q:"How are you feeling right now?", sub:"Sets the vibe for this session.", options:Object.keys(MOODS), multi:false }
 ];
 const LAST = STEPS.length - 1;
@@ -1397,7 +1512,7 @@ function renderStep(){
   $("#startSteps").innerHTML = STEPS.map((_, i) => `<i class="${i <= step ? "on" : ""}"></i>`).join("");
   const box = $("#startChips"); box.innerHTML = "";
   if (s.type === "import"){
-    box.innerHTML = `<textarea id="obImport" placeholder="Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa&#10;..."></textarea>`;
+    box.innerHTML = `<textarea id="obImport" placeholder="https://open.spotify.com/playlist/...&#10;or&#10;Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa"></textarea>`;
     $("#startNext").textContent = "Continue";
     $("#startNext").disabled = false;   // optional step — empty = skip
     return;
@@ -1441,7 +1556,18 @@ $("#startNext").onclick = async () => {
   bootFeed();
 };
 
-renderStep();
+// arriving via a shared song link: no questions, straight to the song
+// (the single Play tap is required — browsers block audio without a gesture)
+if (new URLSearchParams(location.search).has("song")){
+  $("#startQ").textContent = "Someone sent you a song";
+  $("#startSub").textContent = "Tap play — then swipe up for more like it.";
+  $("#startChips").innerHTML = ""; $("#startSteps").innerHTML = "";
+  $("#startNext").textContent = "▶ Play";
+  $("#startNext").disabled = false;
+  $("#startNext").onclick = () => { $("#start").classList.add("hide"); bootFeed(); };
+} else {
+  renderStep();
+}
 refillOnce();
 
 // open index.html#selftest to run — asserts the tricky matching logic still holds
