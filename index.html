@@ -228,8 +228,18 @@
   .row .rt span{ font-size:13px; color:var(--txt-dim); }
   .empty{ color:var(--txt-faint); text-align:center; margin-top:40px; font-size:14px; }
   .listhead{ text-align:left; margin:16px 8px 4px; font-size:13px; font-weight:600; color:var(--txt-dim); letter-spacing:.02em; }
-  .plhead{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:16px 8px 4px; }
-  .plhead b{ font-size:14px; font-weight:600; color:var(--txt-dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* collapsible playlist sections */
+  .plsec{ border:1px solid var(--glass-border); border-radius:14px; margin:8px 0; padding:0 12px;
+    background:var(--glass); }
+  .plsec summary{ cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;
+    gap:10px; padding:14px 2px; }
+  .plsec summary::-webkit-details-marker{ display:none; }
+  .plsec summary b{ font-size:15px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .plsec summary span{ font-size:13px; color:var(--txt-faint); flex-shrink:0; }
+  .plsec summary span::after{ content:" ▾"; }
+  .plsec[open] summary span::after{ content:" ▴"; }
+  .plsec[open]{ padding-bottom:10px; }
+  .plsec-actions{ margin:2px 2px 8px; }
   .plh-actions{ display:flex; align-items:center; gap:8px; flex-shrink:0; }
   .shuffle{ font-size:13px; font-weight:600; padding:7px 14px; border-radius:999px; color:#fff;
     background:var(--accent); transition:transform .15s, filter .2s; }
@@ -271,6 +281,12 @@
   .toggle{ display:flex; align-items:center; gap:10px; margin-top:14px; font-size:14px; font-weight:500;
     color:var(--txt-dim); cursor:pointer; }
   .toggle input{ width:18px; height:18px; accent-color:var(--accent); }
+  .ptabs{ display:flex; gap:8px; margin-bottom:4px; flex-shrink:0; }
+  .ptab{ padding:9px 20px; border-radius:999px; font-size:14px; font-weight:600; color:var(--txt-dim);
+    background:var(--glass); border:1px solid var(--glass-border); transition:background .2s, color .2s; }
+  .ptab:hover{ background:rgba(255,255,255,.12); }
+  .ptab.on{ background:var(--accent); border-color:transparent; color:#fff; }
+  #ptTaste{ flex:1; overflow-y:auto; margin-top:10px; scrollbar-width:thin; }
   .legal{ margin-top:14px; font-size:12px; color:var(--txt-faint); text-align:center; flex-shrink:0; }
   .legal a{ color:var(--txt-dim); text-decoration:none; }
   .legal a:hover{ color:#fff; }
@@ -387,23 +403,29 @@
 
 <div class="sheet" id="profileSheet">
   <h2>Your profile <button data-close>Close</button></h2>
-  <div id="profTop"></div>
-  <div class="learnbar"><i id="learnFill"></i></div>
-  <div class="profActions">
-    <button class="pbtn" id="importBtn">Import songs</button>
-    <button class="pbtn" id="exportBtn">Export profile</button>
-    <label class="pbtn" for="mergeInput">Merge user</label>
-    <input id="mergeInput" type="file" accept="application/json" hidden>
-    <button class="pbtn danger" id="resetBtn">Delete &amp; restart</button>
+  <div class="ptabs">
+    <button class="ptab on" data-pt="taste">Tuning</button>
+    <button class="ptab" data-pt="lib">Playlists</button>
   </div>
-  <label class="toggle"><input type="checkbox" id="origOnly"> Only original songs — hide covers &amp; remixes</label>
-  <div class="listhead" style="margin-left:0">Vibe right now</div>
-  <div id="moodRow" class="moodrow"></div>
-  <div class="listhead" style="margin-left:0">Language right now</div>
-  <div id="langRow" class="moodrow"></div>
-  <div class="listhead" style="margin-left:0">Sleep timer</div>
-  <div id="sleepRow" class="moodrow"></div>
-  <div class="list" id="profileList"></div>
+  <div id="ptTaste">
+    <div id="profTop"></div>
+    <div class="learnbar"><i id="learnFill"></i></div>
+    <div class="profActions">
+      <button class="pbtn" id="importBtn">Import songs</button>
+      <button class="pbtn" id="exportBtn">Export profile</button>
+      <label class="pbtn" for="mergeInput">Merge user</label>
+      <input id="mergeInput" type="file" accept="application/json" hidden>
+      <button class="pbtn danger" id="resetBtn">Delete &amp; restart</button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="origOnly"> Only original songs — hide covers &amp; remixes</label>
+    <div class="listhead" style="margin-left:0">Vibe right now</div>
+    <div id="moodRow" class="moodrow"></div>
+    <div class="listhead" style="margin-left:0">Language right now</div>
+    <div id="langRow" class="moodrow"></div>
+    <div class="listhead" style="margin-left:0">Sleep timer</div>
+    <div id="sleepRow" class="moodrow"></div>
+  </div>
+  <div class="list" id="profileList" hidden></div>
   <div class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · Previews courtesy of Apple Music</div>
 </div>
 
@@ -620,7 +642,8 @@ function nextSeed(){
   const h = new Date().getHours();
   explore.push(langify(h < 9 || h > 22 ? "late night chill" : h > 17 ? "evening hits" : "feel good hits"));
 
-  if (reassess > 0){ reassess--; return pick([...TRENDING.map(langify), langify("new songs"), ...store.tasteSeeds.slice(0,3)]); }
+  // reassess = broad, un-scoped seeds on purpose (logo refresh / filter cleared)
+  if (reassess > 0 && !lockRoots.length){ reassess--; return pick([...TRENDING, "new songs", ...store.tasteSeeds.slice(0,3)]); }
   // bootstrap window: lean on onboarding + fresh/random to understand the user
   if (n < BOOTSTRAP) return Math.random() < .55 ? pick(explore) : pick(learned.length ? learned : explore);
   // steady state: a blend — ~2/3 "more like what you liked" to re-verify taste,
@@ -1116,18 +1139,11 @@ function renderProfile(){
   renderMoodRow(); renderLangRow(); renderSleepRow();
 
   const el = $("#profileList"); el.innerHTML = "";
-  if (store.liked.length){ el.appendChild(plHead("♥ Liked", store.liked)); store.liked.forEach(t => el.appendChild(rowFor(t))); }
-  store.playlists.forEach(pl => {
-    el.appendChild(plHead("✚ " + esc(pl.name), pl.tracks, () => deletePlaylist(pl)));
-    if (pl.tracks.length) pl.tracks.forEach(t => el.appendChild(rowFor(t)));
-    else el.insertAdjacentHTML("beforeend", `<div class="empty" style="margin:8px;font-size:13px">Empty playlist</div>`);
-  });
-  if (store.recentlyPlayed.length){
-    el.appendChild(plHead("↺ Recently played", store.recentlyPlayed));
-    store.recentlyPlayed.slice(0, 25).forEach(t => el.appendChild(rowFor(t)));
-  }
+  if (store.liked.length) el.appendChild(plSection("♥ Liked", store.liked));
+  store.playlists.forEach(pl => el.appendChild(plSection("✚ " + esc(pl.name), pl.tracks, () => deletePlaylist(pl))));
+  if (store.recentlyPlayed.length) el.appendChild(plSection("↺ Recently played", store.recentlyPlayed.slice(0, 25)));
   if (store.followed.length) el.insertAdjacentHTML("beforeend", `<div class="listhead">★ Following: ${store.followed.map(esc).join(", ")}</div>`);
-  if (!store.liked.length && !store.playlists.some(p => p.tracks.length) && !store.recentlyPlayed.length)
+  if (!store.liked.length && !store.playlists.length && !store.recentlyPlayed.length)
     el.insertAdjacentHTML("beforeend", `<div class="empty">Like some songs and they'll show up here</div>`);
 }
 // mid-session switches — take effect on the next songs queued
@@ -1157,35 +1173,42 @@ function renderLangRow(){
     b.onclick = () => {
       const i = langLocks.indexOf(o);
       i >= 0 ? langLocks.splice(i, 1) : langLocks.push(o);
+      if (!langLocks.length) reassess = 2;   // filter off → next batches are broad, all languages
       resetUpcoming(); renderLangRow();
-      toast(langLocks.length ? "Language: " + langLocks.join(", ") : "Language filter cleared");
+      toast(langLocks.length ? "Language: " + langLocks.join(", ") : "Language filter cleared — mixing it up");
       ensureAhead();
     };
     row.appendChild(b);
   });
 }
-function plHead(title, tracks, onDelete){
-  const h = document.createElement("div");
-  h.className = "plhead";
-  h.innerHTML = `<b>${title} · ${tracks.length}</b>`;
+// collapsible playlist section — native <details>, actions live inside so
+// tapping the header only expands/collapses
+function plSection(title, tracks, onDelete){
+  const d = document.createElement("details");
+  d.className = "plsec";
+  const s = document.createElement("summary");
+  s.innerHTML = `<b>${title}</b><span>${tracks.length} song${tracks.length === 1 ? "" : "s"}</span>`;
+  d.appendChild(s);
   const actions = document.createElement("div");
-  actions.className = "plh-actions";
+  actions.className = "plh-actions plsec-actions";
   const sh = document.createElement("button");
   sh.className = "shuffle"; sh.textContent = "⤮ Shuffle";
   sh.onclick = () => playPlaylist(tracks, true);
   actions.appendChild(sh);
   const ex = document.createElement("button");
-  ex.className = "plh-del"; ex.textContent = "⇪"; ex.title = "Export to Spotify / YT Music / Apple"; ex.setAttribute("aria-label", "Export playlist");
+  ex.className = "plh-del"; ex.textContent = "⇪ Export"; ex.title = "Export to Spotify / YT Music / Apple";
   ex.onclick = () => exportTracks(title.replace(/[^\w\s]/g, "").trim() || "playlist", tracks);
   actions.appendChild(ex);
   if (onDelete){
-    const d = document.createElement("button");
-    d.className = "plh-del"; d.textContent = "🗑"; d.title = "Delete playlist"; d.setAttribute("aria-label", "Delete playlist");
-    d.onclick = onDelete;
-    actions.appendChild(d);
+    const del = document.createElement("button");
+    del.className = "plh-del"; del.textContent = "🗑"; del.title = "Delete playlist"; del.setAttribute("aria-label", "Delete playlist");
+    del.onclick = onDelete;
+    actions.appendChild(del);
   }
-  h.appendChild(actions);
-  return h;
+  d.appendChild(actions);
+  if (tracks.length) tracks.forEach(t => d.appendChild(rowFor(t)));
+  else d.insertAdjacentHTML("beforeend", `<div class="empty" style="margin:8px;font-size:13px">Empty playlist</div>`);
+  return d;
 }
 
 // styled confirm popup — resolves true/false
@@ -1216,20 +1239,44 @@ function parseSongLines(text){
                .replace(/\s*[-–—•|]\s*/g, " ")     // separators → spaces for search
                .replace(/\s{2,}/g, " "));
 }
-// ponytail: playlist links are read via public CORS proxies + page scraping —
-// works today, can break if Spotify/YouTube change markup; paste-import is the fallback.
+// ponytail: playlist links are read via public relays + page scraping —
+// works today, can break if services change; paste-import is the fallback.
 async function fetchViaProxy(url){
   const proxies = [
     u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+    u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u),   // JSON-wrapped variant
+    u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
   ];
   for (const p of proxies){
     try {
-      const r = await fetch(p(url), { signal: AbortSignal.timeout(15000) });
-      if (r.ok){ const txt = await r.text(); if (txt.length > 500) return txt; }
+      const r = await fetch(p(url), { signal: AbortSignal.timeout(25000) });
+      if (!r.ok) continue;
+      let txt = await r.text();
+      if (txt.startsWith('{"contents"')) txt = JSON.parse(txt).contents || "";   // /get wrapper
+      if (txt.length > 500) return txt;
     } catch(e){}
   }
   throw new Error("proxy");
+}
+// YouTube: Invidious instances expose the playlist as JSON with real CORS — no proxy needed
+const INVIDIOUS = ["invidious.f5.si","inv.nadeko.net","invidious.nerdvpn.de","yewtu.be","invidious.jing.rocks"];
+async function ytPlaylistLines(listId){
+  for (const host of INVIDIOUS){
+    try {
+      const r = await fetch(`https://${host}/api/v1/playlists/${listId}`, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const lines = (j.videos || []).map(v =>
+        (String(v.title || "").replace(/\(.*?\)|\[.*?\]/g, " ")
+          .replace(/official|music video|full video|lyrical?|lyrics|audio|4k|hd|\|/gi, " ")
+         + " " + String(v.author || "").replace(/\s*-\s*topic$/i, ""))
+        .replace(/\s{2,}/g, " ").trim()).filter(Boolean);
+      if (lines.length) return lines;
+    } catch(e){}
+  }
+  // all instances down — fall back to scraping the playlist page through a proxy
+  const html = await fetchViaProxy(`https://www.youtube.com/playlist?list=${listId}`);
+  return extractPlaylistLines(html, "youtube");
 }
 function extractPlaylistLines(html, kind){
   const unesc = s => { try { return JSON.parse('"' + s + '"'); } catch(e){ return s; } };
@@ -1270,10 +1317,7 @@ async function linesFromInput(text){
     return extractPlaylistLines(html, "spotify").slice(0, 30);
   }
   const yt = url.match(/[?&]list=([\w-]+)/);
-  if (yt){
-    const html = await fetchViaProxy(`https://www.youtube.com/playlist?list=${yt[1]}`);
-    return extractPlaylistLines(html, "youtube").slice(0, 30);
-  }
+  if (yt) return (await ytPlaylistLines(yt[1])).slice(0, 30);
   throw new Error("unsupported link");
 }
 async function importSongs(text, onProgress){
@@ -1281,6 +1325,9 @@ async function importSongs(text, onProgress){
   try { lines = await linesFromInput(text); }
   catch(e){ return { matched:0, total:0, linkFail:true }; }
   if (!lines.length) return { matched:0, total:0, linkFail: /https?:\/\//.test(text) };
+  // imported songs get their own playlist rather than flooding Liked
+  let pl = store.playlists.find(p => p.name === "Imported");
+  if (!pl){ pl = { name:"Imported", tracks:[] }; store.playlists.push(pl); }
   let matched = 0;
   for (let i = 0; i < lines.length; i++){
     onProgress?.(matched, lines.length, i + 1);
@@ -1288,10 +1335,7 @@ async function importSongs(text, onProgress){
       const r = await searchTracks(lines[i], 3);
       if (r[0]){
         const t = r[0];
-        if (!store.liked.some(x => x.trackId === t.trackId)){
-          store.liked.push(slimTrack(t));
-          likedTitles.add(normTitle(t.trackName));
-        }
+        if (!pl.tracks.some(x => x.trackId === t.trackId)) pl.tracks.push(slimTrack(t));
         learn(t, "like");                          // each match trains the profile like a real like
         matched++;
       }
@@ -1304,7 +1348,7 @@ async function importSongs(text, onProgress){
 async function runImport(text, progress){
   if (/https?:\/\//.test(text)) progress("Reading playlist link…");
   const res = await importSongs(text, (m, tot, i) => progress(`Matching song ${i} of ${tot} — ${m} found…`));
-  progress(res.matched ? `Imported ${res.matched} of ${res.total} songs ♥ Your feed already knows you.`
+  progress(res.matched ? `Imported ${res.matched} of ${res.total} songs into your "Imported" playlist ♥`
          : res.linkFail ? "Couldn't read that link — make sure the playlist is public, or paste the songs as text instead"
                         : "Couldn't match those — use one song per line, like: Song - Artist");
   return res;
@@ -1483,6 +1527,12 @@ $("#volSlider").oninput = e => {
 function closeSheets(){ document.querySelectorAll(".sheet").forEach(s => s.classList.remove("open")); }
 $("#searchBtn").onclick  = () => { closeSheets(); $("#searchSheet").classList.add("open"); $("#searchInput").focus(); };
 $("#profileBtn").onclick = () => { closeSheets(); renderProfile(); $("#profileSheet").classList.add("open"); };
+document.querySelectorAll(".ptab").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".ptab").forEach(x => x.classList.toggle("on", x === b));
+  const lib = b.dataset.pt === "lib";
+  $("#ptTaste").hidden = lib;
+  $("#profileList").hidden = !lib;
+});
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = closeSheets);
 
 let toastT;
