@@ -713,6 +713,7 @@ function makeCard(t){
         <div class="artist ${isFollowed ? "followed" : ""}">${esc(t.artistName)}</div>
         <div class="tags">
           <span class="tag">${esc(t.primaryGenreName || "Music")}</span>
+          ${langLock ? `<span class="tag mood">🌐 ${langLock}</span>` : ""}
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
@@ -1068,7 +1069,12 @@ function chipRow(elId, options, getSel, setSel, label){
     b.textContent = o;
     b.onclick = () => {
       setSel(getSel() === o ? null : o);
-      queue = []; recentArtists.length = 0;   // clear so the switch kicks in fast
+      queue = []; recentArtists.length = 0;
+      // drop every unplayed card too — the very next swipe is already the new filter
+      while (current && current.nextElementSibling){
+        io.unobserve(current.nextElementSibling);
+        current.nextElementSibling.remove();
+      }
       renderMoodRow(); renderLangRow();
       toast(getSel() ? label + ": " + getSel() : label + " cleared");
       ensureAhead();
