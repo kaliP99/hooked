@@ -1723,9 +1723,15 @@ $("#startNext").onclick = async () => {
       for (const e of picked[2]) store.tasteSeeds.push(ERAS[e]);
     } else if (step === 3){
       const txt = $("#obImport")?.value.trim();
-      if (txt){
-        $("#startNext").disabled = true;
-        await runImport(txt, msg => $("#startSub").textContent = msg);
+      if (txt && !importing){
+        // runs in the background — user moves on, the top bar shows progress
+        importing = true;
+        toast("Importing in the background — keep going ♪");
+        let last = "";
+        runImport(txt, msg => { last = msg; }).then(res => {
+          importing = false;
+          askConfirm(res.matched ? "Import finished ♥" : "Import failed", last, "OK", true);
+        });
       }
     }
     store.tasteSeeds = [...new Set(store.tasteSeeds)]; save();
