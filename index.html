@@ -1211,12 +1211,13 @@ function plSection(title, tracks, onDelete){
   return d;
 }
 
-// styled confirm popup — resolves true/false
-function askConfirm(title, msg, okLabel = "Delete"){
+// styled confirm popup — resolves true/false; okOnly = single-button notice
+function askConfirm(title, msg, okLabel = "Delete", okOnly = false){
   return new Promise(res => {
     $("#confirmTitle").textContent = title;
     $("#confirmMsg").textContent = msg;
     $("#confirmOk").textContent = okLabel;
+    $("#confirmCancel").style.display = okOnly ? "none" : "";
     $("#confirm").classList.remove("hide");
     const done = v => { $("#confirm").classList.add("hide"); $("#confirmOk").onclick = null; $("#confirmCancel").onclick = null; res(v); };
     $("#confirmOk").onclick = () => done(true);
@@ -1243,6 +1244,7 @@ function parseSongLines(text){
 // works today, can break if services change; paste-import is the fallback.
 async function fetchViaProxy(url){
   const proxies = [
+    u => "/relay?url=" + encodeURIComponent(u),   // our own Netlify function — first and most reliable
     u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
     u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u),   // JSON-wrapped variant
     u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
@@ -1369,13 +1371,21 @@ function exportTracks(name, tracks){
 }
 
 $("#importBtn").onclick = () => { closeSheets(); $("#importStatus").textContent = ""; $("#importSheet").classList.add("open"); };
-$("#importRun").onclick = async () => {
+// import runs in the background — keep scrolling, a popup reports the outcome
+let importing = false;
+$("#importRun").onclick = () => {
   const txt = $("#importText").value.trim();
-  if (!txt) return;
-  $("#importRun").disabled = true;
-  await runImport(txt, msg => $("#importStatus").textContent = msg);
-  $("#importRun").disabled = false;
+  if (!txt || importing) return;
+  importing = true;
   $("#importText").value = "";
+  closeSheets();
+  toast("Importing in the background — keep listening ♪");
+  let last = "";
+  runImport(txt, msg => { last = msg; }).then(res => {
+    importing = false;
+    askConfirm(res.matched ? "Import finished ♥" : "Import failed", last, "OK", true);
+    if (res.matched) renderProfile();
+  });
 };
 
 /* export / merge / reset */
