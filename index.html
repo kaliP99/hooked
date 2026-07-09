@@ -218,8 +218,12 @@
   #importRun[disabled]{ opacity:.4; pointer-events:none; }
   .list{ flex:1; overflow-y:auto; margin-top:14px; scrollbar-width:thin; }
   .row{ display:flex; gap:12px; align-items:center; padding:10px 8px; width:100%; text-align:left;
-    border-radius:12px; transition:background .15s; }
+    border-radius:12px; transition:background .15s; cursor:pointer; }
   .row:hover{ background:var(--glass); }
+  .rowx{ width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:13px;
+    flex-shrink:0; color:var(--txt-dim); background:var(--glass); border:1px solid var(--glass-border);
+    transition:background .2s, color .2s; }
+  .rowx:hover{ color:#fff; background:rgba(230,69,90,.3); border-color:rgba(230,69,90,.4); }
   .row img{ width:52px; height:52px; border-radius:10px; }
   .row .ph{ width:52px; height:52px; border-radius:10px; display:grid; place-items:center; font-size:20px;
     background:var(--glass); border:1px solid var(--glass-border); }
@@ -1110,12 +1114,18 @@ $("#searchInput").addEventListener("input", e => {
     r.forEach(t => $("#searchResults").appendChild(rowFor(t)));
   }, 350);
 });
-function rowFor(t){
-  const b = document.createElement("button");
-  b.className = "row";
+function rowFor(t, onRemove){
+  const b = document.createElement("div");
+  b.className = "row"; b.setAttribute("role", "button"); b.tabIndex = 0;
   const img = t.artworkUrl100 ? `<img src="${t.artworkUrl100}" alt="">` : `<span class="ph">♫</span>`;
   b.innerHTML = `${img}<div class="rt"><b>${esc(t.trackName)}</b><span>${esc(t.artistName)}</span></div><span>▶</span>`;
   b.onclick = () => { closeSheets(); playNow(t); };
+  if (onRemove){
+    const x = document.createElement("button");
+    x.className = "rowx"; x.textContent = "✕"; x.title = "Remove from playlist"; x.setAttribute("aria-label", "Remove song");
+    x.onclick = e => { e.stopPropagation(); onRemove(); };
+    b.appendChild(x);
+  }
   return b;
 }
 function playNow(t){
@@ -1138,10 +1148,14 @@ function renderProfile(){
   $("#origOnly").checked = store.originalsOnly;
   renderMoodRow(); renderLangRow(); renderSleepRow();
 
-  const el = $("#profileList"); el.innerHTML = "";
+  const el = $("#profileList");
+  // keep sections the user opened expanded across re-renders (e.g. removing songs)
+  const wasOpen = new Set([...el.querySelectorAll("details[open] summary b")].map(b => b.textContent));
+  el.innerHTML = "";
   if (store.liked.length) el.appendChild(plSection("♥ Liked", store.liked));
   store.playlists.forEach(pl => el.appendChild(plSection("✚ " + esc(pl.name), pl.tracks, () => deletePlaylist(pl))));
-  if (store.recentlyPlayed.length) el.appendChild(plSection("↺ Recently played", store.recentlyPlayed.slice(0, 25)));
+  if (store.recentlyPlayed.length) el.appendChild(plSection("↺ Recently played", store.recentlyPlayed));
+  el.querySelectorAll("details").forEach(d => { if (wasOpen.has(d.querySelector("summary b")?.textContent)) d.open = true; });
   if (store.followed.length) el.insertAdjacentHTML("beforeend", `<div class="listhead">★ Following: ${store.followed.map(esc).join(", ")}</div>`);
   if (!store.liked.length && !store.playlists.length && !store.recentlyPlayed.length)
     el.insertAdjacentHTML("beforeend", `<div class="empty">Like some songs and they'll show up here</div>`);
@@ -1206,7 +1220,11 @@ function plSection(title, tracks, onDelete){
     actions.appendChild(del);
   }
   d.appendChild(actions);
-  if (tracks.length) tracks.forEach(t => d.appendChild(rowFor(t)));
+  if (tracks.length) tracks.forEach(t => d.appendChild(rowFor(t, () => {
+    tracks.splice(tracks.indexOf(t), 1);
+    if (tracks === store.liked) likedTitles.delete(normTitle(t.trackName));
+    save(); renderProfile(); toast("Removed");
+  })));
   else d.insertAdjacentHTML("beforeend", `<div class="empty" style="margin:8px;font-size:13px">Empty playlist</div>`);
   return d;
 }
