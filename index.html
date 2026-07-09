@@ -351,6 +351,7 @@
 <div id="top">
   <button id="logo" title="Refresh &amp; re-read your taste">Hooked<em>.</em></button>
   <div id="topR">
+    <button class="topbtn" id="dailyBtn" title="Daily discoveries" aria-label="Daily discoveries">✦</button>
     <div id="volWrap">
       <input type="range" id="volSlider" min="0" max="100" aria-label="Volume">
       <button class="topbtn" id="volBtn" title="Volume" aria-label="Volume">🔊</button>
@@ -397,6 +398,8 @@
   <div id="moodRow" class="moodrow"></div>
   <div class="listhead" style="margin-left:0">Language right now</div>
   <div id="langRow" class="moodrow"></div>
+  <div class="listhead" style="margin-left:0">Sleep timer</div>
+  <div id="sleepRow" class="moodrow"></div>
   <div class="list" id="profileList"></div>
   <div class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · Previews courtesy of Apple Music</div>
 </div>
@@ -677,9 +680,21 @@ async function ensureAhead(){
 }
 
 function showOffline(on){ $("#offline").classList.toggle("hide", !on); }
+// a shared link (?song=id) lands with that exact song as the first card
+async function sharedSong(){
+  const id = new URLSearchParams(location.search).get("song");
+  if (!id) return null;
+  history.replaceState(null, "", location.pathname);   // don't re-pin it on refresh
+  try {
+    const d = await jsonp(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}`);
+    return (d.results || []).find(x => x.previewUrl) || null;
+  } catch(e){ return null; }
+}
 // single entry point for first load + retry
 async function bootFeed(){
+  const shared = await sharedSong();
   await refillOnce(); appendCards(5); await ensureAhead();
+  if (shared){ seen.add(shared.trackId); feed.prepend(makeCard(shared)); }
   const first = feed.firstElementChild;
   if (first){ showOffline(false); playCard(first); }
   else showOffline(true);
@@ -732,6 +747,7 @@ function makeCard(t){
       <button class="act ${isLiked ? "on" : ""}" data-a="like"><span class="ic">♥</span>Like</button>
       <button class="act ${isSaved ? "on" : ""}" data-a="save"><span class="ic">✚</span>Save</button>
       <button class="act ${isFollowed ? "on" : ""}" data-a="follow"><span class="ic">★</span>Follow</button>
+      <button class="act" data-a="more"><span class="ic">♬</span>More</button>
       <button class="act" data-a="share"><span class="ic">↗</span>Share</button>
     </div>`;
   el._track = t;
@@ -806,9 +822,13 @@ function action(a, t, btn){
       if (fromSearch) prioritizeSearch(t);
     }
     save();
+  } else if (a === "more"){
+    moreLikeThis(t);
   } else if (a === "share"){
     learn(t, "share"); haptic(10);
-    const data = { title:t.trackName, text:`🎵 ${t.trackName} — ${t.artistName}`, url:deepLinks(t).ap };
+    // share a Hooked link — the recipient lands in the app with this song playing
+    const data = { title:t.trackName, text:`🎵 ${t.trackName} — ${t.artistName} · hear the hook`,
+      url: location.origin + location.pathname + "?song=" + t.trackId };
     if (navigator.share) navigator.share(data).then(() => toast("Shared")).catch(() => copyShare(data));
     else copyShare(data);
   }
@@ -818,6 +838,18 @@ function copyShare(d){
   if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast("Link copied")).catch(() => toast(txt));
   else toast("Link copied");
 }
+// one-tap "more like this" — steer the feed toward this song's sound right now
+function moreLikeThis(t){
+  store.searchLiked = [...new Set([t.artistName, ...store.searchLiked])].slice(0, 12);
+  bump(store.artists, t.artistName, 3);
+  bump(store.genres, t.primaryGenreName, 1.5);
+  save(); haptic(12);
+  queue = []; recentArtists.length = 0;
+  while (current && current.nextElementSibling){ io.unobserve(current.nextElementSibling); current.nextElementSibling.remove(); }
+  toast("More like " + t.artistName + " coming up");
+  ensureAhead();
+}
+
 // searching for a song then liking/following it = a strong steer toward that sound
 function prioritizeSearch(t){
   store.searchLiked = [...new Set([t.artistName, ...store.searchLiked])].slice(0, 12);
@@ -1043,7 +1075,7 @@ function renderProfile(){
     (store.searchLiked.length ? `<br>Chasing: ${esc(store.searchLiked.slice(0,3).join(", "))}` : "");
   $("#learnFill").style.width = Math.min(100, n / BOOTSTRAP * 100) + "%";
   $("#origOnly").checked = store.originalsOnly;
-  renderMoodRow(); renderLangRow();
+  renderMoodRow(); renderLangRow(); renderSleepRow();
 
   const el = $("#profileList"); el.innerHTML = "";
   if (store.liked.length){ el.appendChild(plHead("♥ Liked", store.liked)); store.liked.forEach(t => el.appendChild(rowFor(t))); }
@@ -1279,6 +1311,47 @@ function playPlaylist(tracks, shuffle){
 }
 
 /* ---------- sheets / toast / utils ---------- */
+/* ---------- daily discoveries — a fresh date-seeded drop, same for the whole day ---------- */
+$("#dailyBtn").onclick = async () => {
+  if (!store.onboarded) return;
+  toast("Loading today's drop ✦");
+  const day = new Date().toISOString().slice(0, 10);
+  let h = 0; for (const c of day) h = (h * 31 + c.charCodeAt(0)) >>> 0;   // stable per-day hash
+  const pool = [...store.tasteSeeds, ...TRENDING];
+  const seeds = [...new Set([pool[h % pool.length], pool[(h >> 3) % pool.length], "new music friday"])];
+  const tracks = [];
+  for (const s of seeds){ try { tracks.push(...await searchTracks(s, 12)); } catch(e){} }
+  const fresh = tracks
+    .filter((t, i, a) => a.findIndex(x => x.trackId === t.trackId) === i)   // dedupe, but re-showing is fine for a daily drop
+    .filter(t => !COVERISH.test(t.trackName) && !REMIXISH.test(t.trackName))
+    .slice(0, 20);
+  if (!fresh.length) return toast("Couldn't load today's drop — try again");
+  [...feed.children].forEach(c => { io.unobserve(c); c.remove(); });
+  current = null; queue = [];
+  fresh.forEach(t => { seen.add(t.trackId); feed.appendChild(makeCard(t)); });
+  const first = feed.firstElementChild;
+  first.scrollIntoView(); playCard(first);
+};
+
+/* ---------- sleep timer (session-only) ---------- */
+let sleepT = null, sleepSel = null;
+function renderSleepRow(){
+  const row = $("#sleepRow"); row.innerHTML = "";
+  ["15 min","30 min","60 min"].forEach(o => {
+    const b = document.createElement("button");
+    b.className = "chip" + (o === sleepSel ? " sel" : "");
+    b.textContent = o;
+    b.onclick = () => {
+      sleepSel = sleepSel === o ? null : o;
+      clearTimeout(sleepT);
+      if (sleepSel) sleepT = setTimeout(() => { player.pause(); sleepSel = null; renderSleepRow(); toast("Sleep timer: music paused 😴"); }, parseInt(sleepSel) * 60000);
+      renderSleepRow();
+      toast(sleepSel ? "Music stops in " + sleepSel : "Sleep timer off");
+    };
+    row.appendChild(b);
+  });
+}
+
 /* ---------- volume (note: iOS ignores element volume — hardware buttons rule there) ---------- */
 player.volume = store.volume / 100;
 const volIcon = v => v === 0 ? "🔇" : v < 50 ? "🔉" : "🔊";
