@@ -207,6 +207,15 @@
   #searchInput, #plNew{ width:100%; padding:14px 18px; border-radius:14px; font-size:16px; color:#fff;
     font-family:inherit; background:var(--glass); border:1px solid var(--glass-border); outline:none; transition:border-color .2s; }
   #searchInput:focus, #plNew:focus{ border-color:var(--accent); }
+  #obImport, #importText{ width:100%; min-height:150px; padding:14px; border-radius:14px; font:inherit;
+    font-size:14px; color:#fff; background:var(--glass); border:1px solid var(--glass-border);
+    outline:none; resize:vertical; text-align:left; }
+  #obImport:focus, #importText:focus{ border-color:var(--accent); }
+  .imp-hint{ font-size:13px; color:var(--txt-dim); margin-bottom:12px; line-height:1.5; }
+  #importRun{ margin-top:14px; padding:13px; border-radius:12px; font-weight:700; font-size:15px;
+    background:#fff; color:#111; transition:transform .15s, opacity .2s; }
+  #importRun:active{ transform:scale(.97); }
+  #importRun[disabled]{ opacity:.4; pointer-events:none; }
   .list{ flex:1; overflow-y:auto; margin-top:14px; scrollbar-width:thin; }
   .row{ display:flex; gap:12px; align-items:center; padding:10px 8px; width:100%; text-align:left;
     border-radius:12px; transition:background .15s; }
@@ -377,7 +386,8 @@
   <div id="profTop"></div>
   <div class="learnbar"><i id="learnFill"></i></div>
   <div class="profActions">
-    <button class="pbtn" id="exportBtn">Export</button>
+    <button class="pbtn" id="importBtn">Import songs</button>
+    <button class="pbtn" id="exportBtn">Export profile</button>
     <label class="pbtn" for="mergeInput">Merge user</label>
     <input id="mergeInput" type="file" accept="application/json" hidden>
     <button class="pbtn danger" id="resetBtn">Delete &amp; restart</button>
@@ -389,6 +399,14 @@
   <div id="langRow" class="moodrow"></div>
   <div class="list" id="profileList"></div>
   <div class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · Previews courtesy of Apple Music</div>
+</div>
+
+<div class="sheet" id="importSheet">
+  <h2>Import songs <button data-close>Close</button></h2>
+  <p class="imp-hint">Paste songs from Spotify or YouTube Music, one per line ("Song - Artist"). In Spotify: select the playlist's tracks and copy. First 20 lines are matched.</p>
+  <textarea id="importText" placeholder="Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa&#10;..."></textarea>
+  <button id="importRun">Import</button>
+  <div class="empty" id="importStatus" style="margin-top:14px"></div>
 </div>
 
 <div class="sheet" id="plSheet">
@@ -457,6 +475,8 @@ function rejectTrack(t){
   const nt = normTitle(t.trackName);
   if (skippedTitles.has(nt)) return true;                       // they told us no — stop offering versions of it
   if ((artistStrikes[t.artistName]||0) >= 2) return true;       // artist benched until a positive signal
+  // compilation releases ("Various Artists") carry generic compilation artwork, not the song's real cover
+  if ((t.collectionArtistName || "").toLowerCase().includes("various")) return true;
   if (store.originalsOnly && shownTitles.has(nt)) return true;  // originals only: one version per session, ever
   const isCoverish = COVERISH.test(t.trackName) || REMIXISH.test(t.trackName);
   if (!isCoverish) return false;
@@ -714,6 +734,9 @@ function makeCard(t){
       <button class="act" data-a="share"><span class="ic">↗</span>Share</button>
     </div>`;
   el._track = t;
+
+  const art = el.querySelector(".art");
+  art.onerror = () => { art.onerror = null; art.src = t.artworkUrl100 || "icon.svg"; };   // never a broken cover
 
   // whole song is tappable (Instagram-style): single tap = play/pause, double tap = like.
   // 280ms window tells them apart; taps on the controls are ignored.
@@ -1069,6 +1092,10 @@ function plHead(title, tracks, onDelete){
   sh.className = "shuffle"; sh.textContent = "⤮ Shuffle";
   sh.onclick = () => playPlaylist(tracks, true);
   actions.appendChild(sh);
+  const ex = document.createElement("button");
+  ex.className = "plh-del"; ex.textContent = "⇪"; ex.title = "Export to Spotify / YT Music / Apple"; ex.setAttribute("aria-label", "Export playlist");
+  ex.onclick = () => exportTracks(title.replace(/[^\w\s]/g, "").trim() || "playlist", tracks);
+  actions.appendChild(ex);
   if (onDelete){
     const d = document.createElement("button");
     d.className = "plh-del"; d.textContent = "🗑"; d.title = "Delete playlist"; d.setAttribute("aria-label", "Delete playlist");
@@ -1097,6 +1124,68 @@ async function deletePlaylist(pl){
   if (i >= 0) store.playlists.splice(i, 1);
   save(); haptic(12); renderProfile(); toast("Playlist deleted");
 }
+
+/* ---------- playlist import (paste from Spotify / YT Music) ---------- */
+function parseSongLines(text){
+  return text.split(/\r?\n/).map(l => l.trim())
+    .filter(l => l.length > 1)
+    .slice(0, 20)                                  // rate-limit budget: 20 lookups, ~1/s
+    .map(l => l.replace(/^\d+[.)]\s*/, "")         // drop "1." numbering
+               .replace(/\s*[-–—•|]\s*/g, " ")     // separators → spaces for search
+               .replace(/\s{2,}/g, " "));
+}
+async function importSongs(text, onProgress){
+  const lines = parseSongLines(text);
+  let matched = 0;
+  for (let i = 0; i < lines.length; i++){
+    onProgress?.(matched, lines.length, i + 1);
+    try {
+      const r = await searchTracks(lines[i], 3);
+      if (r[0]){
+        const t = r[0];
+        if (!store.liked.some(x => x.trackId === t.trackId)){
+          store.liked.push(slimTrack(t));
+          likedTitles.add(normTitle(t.trackName));
+        }
+        learn(t, "like");                          // each match trains the profile like a real like
+        matched++;
+      }
+    } catch(e){ break; }                           // hit the backoff — keep what we got
+    await new Promise(r => setTimeout(r, 1000));   // stay under Apple's ~20/min
+  }
+  save();
+  return { matched, total: lines.length };
+}
+async function runImport(text, progress){
+  const res = await importSongs(text, (m, tot, i) => progress(`Matching song ${i} of ${tot} — ${m} found…`));
+  progress(res.matched ? `Imported ${res.matched} of ${res.total} songs ♥ Your feed already knows you.`
+                       : "Couldn't match those — use one song per line, like: Song - Artist");
+  return res;
+}
+
+/* ---------- playlist export (for Spotify / YT Music / Apple via TuneMyMusic) ---------- */
+function exportTracks(name, tracks){
+  const list = tracks.map(t => `${t.trackName} - ${t.artistName}`).join("\n");
+  if (navigator.clipboard) navigator.clipboard.writeText(list).catch(()=>{});
+  const q = s => `"${String(s || "").replace(/"/g, '""')}"`;
+  const csv = "Title,Artist\n" + tracks.map(t => `${q(t.trackName)},${q(t.artistName)}`).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type:"text/csv" }));
+  a.download = name.replace(/\W+/g, "-").replace(/^-|-$/g, "").toLowerCase() + ".csv";
+  a.click(); URL.revokeObjectURL(a.href);
+  askConfirm("Exported ✓", "Song list copied to clipboard and downloaded as CSV. Import it at TuneMyMusic to create this playlist on Spotify, YouTube Music, or Apple Music.", "Open TuneMyMusic")
+    .then(go => { if (go) window.open("https://www.tunemymusic.com/transfer", "_blank", "noopener"); });
+}
+
+$("#importBtn").onclick = () => { closeSheets(); $("#importStatus").textContent = ""; $("#importSheet").classList.add("open"); };
+$("#importRun").onclick = async () => {
+  const txt = $("#importText").value.trim();
+  if (!txt) return;
+  $("#importRun").disabled = true;
+  await runImport(txt, msg => $("#importStatus").textContent = msg);
+  $("#importRun").disabled = false;
+  $("#importText").value = "";
+};
 
 /* export / merge / reset */
 $("#exportBtn").onclick = () => {
@@ -1214,6 +1303,7 @@ const STEPS = [
   { q:"What do you listen to?", sub:"Pick a few — this only seeds your first songs while we learn the real you.", options:Object.keys(GENRES), multi:true },
   { q:"Which languages?", sub:"We'll play music in the languages you pick.", options:Object.keys(LANGS), multi:true },
   { q:"Which eras hit hardest?", sub:"Pick one or more.", options:Object.keys(ERAS), multi:true },
+  { q:"Bring your playlists", sub:"Paste songs from Spotify or YouTube Music, one per line — we'll learn your taste instantly. Or skip.", type:"import" },
   { q:"How are you feeling right now?", sub:"Sets the vibe for this session.", options:Object.keys(MOODS), multi:false }
 ];
 const LAST = STEPS.length - 1;
@@ -1227,6 +1317,12 @@ function renderStep(){
   $("#startNext").disabled = true;
   $("#startSteps").innerHTML = STEPS.map((_, i) => `<i class="${i <= step ? "on" : ""}"></i>`).join("");
   const box = $("#startChips"); box.innerHTML = "";
+  if (s.type === "import"){
+    box.innerHTML = `<textarea id="obImport" placeholder="Tum Hi Ho - Arijit Singh&#10;Levitating - Dua Lipa&#10;..."></textarea>`;
+    $("#startNext").textContent = "Continue";
+    $("#startNext").disabled = false;   // optional step — empty = skip
+    return;
+  }
   s.options.forEach(o => {
     const b = document.createElement("button");
     b.className = "chip"; b.textContent = o;
@@ -1249,6 +1345,12 @@ $("#startNext").onclick = async () => {
     } else if (step === 2){
       store.prefs.eras = [...picked[2]];
       for (const e of picked[2]) store.tasteSeeds.push(ERAS[e]);
+    } else if (step === 3){
+      const txt = $("#obImport")?.value.trim();
+      if (txt){
+        $("#startNext").disabled = true;
+        await runImport(txt, msg => $("#startSub").textContent = msg);
+      }
     }
     store.tasteSeeds = [...new Set(store.tasteSeeds)]; save();
     step++; renderStep(); refillOnce(); return;
@@ -1271,6 +1373,9 @@ if (location.hash === "#selftest"){
   ok("original passes", !COVERISH.test("Blinding Lights") && !REMIXISH.test("Blinding Lights"));
   ok("normTitle strips feat/parens", normTitle("Blinding Lights (feat. X)") === "blindinglights");
   ok("topKeys ranks + drops zero", JSON.stringify(topKeys({a:3,b:1,c:0}, 2)) === JSON.stringify(["a","b"]));
+  ok("parseSongLines cleans numbering + separators",
+    JSON.stringify(parseSongLines("1. Tum Hi Ho - Arijit Singh\n\n2) Levitating – Dua Lipa")) ===
+    JSON.stringify(["Tum Hi Ho Arijit Singh","Levitating Dua Lipa"]));
 }
 </script>
 </body>
