@@ -351,6 +351,15 @@
   #startSteps i{ width:22px; height:3px; border-radius:2px; background:rgba(255,255,255,.15); }
   #startSteps i.on{ background:var(--accent); }
 
+  /* import progress — pinned above everything */
+  #impBar{ position:fixed; top:0; left:0; right:0; z-index:45; pointer-events:none; transition:opacity .3s; }
+  #impBar.hide{ opacity:0; }
+  #impBar i{ display:block; height:3px; width:0;
+    background:linear-gradient(90deg,var(--accent),var(--accent-soft)); transition:width .4s; }
+  #impBar span{ position:absolute; top:10px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    font-size:12px; font-weight:600; padding:6px 14px; border-radius:999px; color:#fff;
+    background:rgba(20,20,26,.85); border:1px solid var(--glass-border); backdrop-filter:blur(16px); }
+
   #toast{ position:fixed; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px); z-index:40;
     padding:10px 20px; border-radius:999px; font-size:14px; font-weight:600; opacity:0;
     background:rgba(255,255,255,.12); border:1px solid var(--glass-border); backdrop-filter:blur(20px);
@@ -457,6 +466,8 @@
     </div>
   </div>
 </div>
+
+<div id="impBar" class="hide"><i></i><span></span></div>
 
 <div id="toast"></div>
 <audio id="player"></audio>
@@ -1253,7 +1264,7 @@ async function deletePlaylist(pl){
 function parseSongLines(text){
   return text.split(/\r?\n/).map(l => l.trim())
     .filter(l => l.length > 1)
-    .slice(0, 20)                                  // rate-limit budget: 20 lookups, ~1/s
+    .slice(0, 200)                                 // sanity cap only — paced matching handles the rate limit
     .map(l => l.replace(/^\d+[.)]\s*/, "")         // drop "1." numbering
                .replace(/\s*[-–—•|]\s*/g, " ")     // separators → spaces for search
                .replace(/\s{2,}/g, " "));
@@ -1334,40 +1345,58 @@ async function linesFromInput(text){
   const sp = url.match(/spotify\.com\/(?:[\w-]+\/)?(playlist|album)\/([A-Za-z0-9]+)/);
   if (sp){
     const html = await fetchViaProxy(`https://open.spotify.com/embed/${sp[1]}/${sp[2]}`);
-    return extractPlaylistLines(html, "spotify").slice(0, 30);
+    return extractPlaylistLines(html, "spotify").slice(0, 200);
   }
   const yt = url.match(/[?&]list=([\w-]+)/);
-  if (yt) return (await ytPlaylistLines(yt[1])).slice(0, 30);
+  if (yt) return (await ytPlaylistLines(yt[1])).slice(0, 200);
   throw new Error("unsupported link");
 }
 async function importSongs(text, onProgress){
   let lines;
   try { lines = await linesFromInput(text); }
   catch(e){ return { matched:0, total:0, linkFail:true }; }
+  lines = [...new Set(lines)];
   if (!lines.length) return { matched:0, total:0, linkFail: /https?:\/\//.test(text) };
   // imported songs get their own playlist rather than flooding Liked
   let pl = store.playlists.find(p => p.name === "Imported");
   if (!pl){ pl = { name:"Imported", tracks:[] }; store.playlists.push(pl); }
-  let matched = 0;
+  let matched = 0, fails = 0;
   for (let i = 0; i < lines.length; i++){
     onProgress?.(matched, lines.length, i + 1);
     try {
       const r = await searchTracks(lines[i], 3);
+      fails = 0;
       if (r[0]){
         const t = r[0];
         if (!pl.tracks.some(x => x.trackId === t.trackId)) pl.tracks.push(slimTrack(t));
         learn(t, "like");                          // each match trains the profile like a real like
         matched++;
       }
-    } catch(e){ break; }                           // hit the backoff — keep what we got
-    await new Promise(r => setTimeout(r, 1500));   // stay near Apple's ~20/min
+    } catch(e){
+      if (++fails >= 3) break;                     // repeatedly failing — stop, keep what we got
+      await new Promise(r => setTimeout(r, 25000));   // rate-limited: cool off, then retry this song
+      i--; continue;
+    }
+    if (i % 10 === 9) save();                      // checkpoint long imports
+    await new Promise(r => setTimeout(r, 2200));   // paced under Apple's ~20/min
   }
   save();
   return { matched, total: lines.length };
 }
+function impBar(i, tot, matched){
+  const el = $("#impBar");
+  if (i == null) return el.classList.add("hide");
+  el.classList.remove("hide");
+  el.querySelector("i").style.width = (i / tot * 100) + "%";
+  el.querySelector("span").textContent = `Importing ${i}/${tot} · ${matched} matched`;
+}
 async function runImport(text, progress){
-  if (/https?:\/\//.test(text)) progress("Reading playlist link…");
-  const res = await importSongs(text, (m, tot, i) => progress(`Matching song ${i} of ${tot} — ${m} found…`));
+  if (/https?:\/\//.test(text)){ progress("Reading playlist link…"); impBar(0, 1, 0); }
+  const res = await importSongs(text, (m, tot, i) => {
+    progress(`Matching song ${i} of ${tot} — ${m} found…`);
+    impBar(i, tot, m);
+  });
+  impBar(null);
   progress(res.matched ? `Imported ${res.matched} of ${res.total} songs into your "Imported" playlist ♥`
          : res.linkFail ? "Couldn't read that link — make sure the playlist is public, or paste the songs as text instead"
                         : "Couldn't match those — use one song per line, like: Song - Artist");
