@@ -102,12 +102,15 @@
   /* full-song deep links — sit in flow at the very bottom of the text block */
   .links{ display:flex; align-items:center; gap:8px; justify-content:flex-start; flex-wrap:wrap; margin-top:16px; }
   .links span{ font-size:12px; color:var(--txt-faint); }
-  .links a{ font-size:12px; font-weight:600; padding:6px 13px; border-radius:999px; text-decoration:none;
-    color:var(--txt-dim); background:var(--glass); border:1px solid var(--glass-border);
+  .links a{ width:38px; height:38px; border-radius:50%; display:grid; place-items:center; line-height:0;
+    font-size:19px; text-decoration:none; color:var(--txt-dim);
+    background:var(--glass); border:1px solid var(--glass-border);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.06); transition:background .2s, color .2s, transform .15s; }
+  .links a i{ line-height:1; display:block; }
   .links a:hover{ background:rgba(255,255,255,.12); color:#fff; transform:translateY(-1px); }
   .links a.yt:hover{ color:#ff5a5a; border-color:rgba(255,90,90,.4); }
   .links a.sp:hover{ color:#4fd08a; border-color:rgba(79,208,138,.4); }
+  .links a.ap:hover{ color:#fa586a; border-color:rgba(250,88,106,.4); }
   .credit{ margin-top:10px; font-size:11px; color:var(--txt-faint); }
   .credit a{ color:var(--txt-dim); text-decoration:none; }
   .credit a:hover{ color:#fff; }
@@ -135,11 +138,12 @@
     color:var(--txt-faint); font-size:12px; text-align:center; padding:14px; }
   @media (min-width:1240px){ body.ads-on .siderail{ display:block; } }
 
-  /* action rail — mobile: bottom-right, TikTok-style, aligned to the text baseline */
+  /* action rail — mobile: bottom-right, TikTok-style, aligned to the text baseline.
+     compact sizing so six actions fit small screens */
   .rail{ position:absolute; right:14px; bottom:calc(env(safe-area-inset-bottom) + 18px);
-    display:flex; flex-direction:column; gap:16px; z-index:3; }
-  .act{ display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11px; font-weight:500; color:var(--txt-dim); }
-  .act .ic{ width:50px; height:50px; border-radius:50%; display:grid; place-items:center; font-size:21px;
+    display:flex; flex-direction:column; gap:11px; z-index:3; }
+  .act{ display:flex; flex-direction:column; align-items:center; gap:3px; font-size:10px; font-weight:500; color:var(--txt-dim); }
+  .act .ic{ width:44px; height:44px; border-radius:50%; display:grid; place-items:center; font-size:21px;
     background:var(--glass); border:1px solid var(--glass-border); backdrop-filter:blur(16px);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.08); transition:transform .2s, background .2s; }
   .act:hover .ic{ background:rgba(255,255,255,.13); transform:scale(1.08); }
@@ -231,9 +235,17 @@
   .sheet h2 button{ font-size:14px; font-weight:500; color:var(--txt-dim); padding:6px 14px; border-radius:999px;
     background:var(--glass); border:1px solid var(--glass-border); }
   .sheet h2 button:hover{ background:rgba(255,255,255,.12); }
-  #searchInput, #plNew{ width:100%; padding:14px 18px; border-radius:14px; font-size:16px; color:#fff;
+  #searchInput, #plNew, #ytKey{ width:100%; padding:14px 18px; border-radius:14px; font-size:16px; color:#fff;
     font-family:inherit; background:var(--glass); border:1px solid var(--glass-border); outline:none; transition:border-color .2s; }
-  #searchInput:focus, #plNew:focus{ border-color:var(--accent); }
+  #searchInput:focus, #plNew:focus, #ytKey:focus{ border-color:var(--accent); }
+
+  /* youtube engine: one persistent player, fixed-positioned over the active card's slot
+     (iframes reload if moved in the DOM, so we position instead of reparent) */
+  .ytslot{ width:100%; max-width:min(88vw,420px); aspect-ratio:16/9; align-self:center; margin-top:auto;
+    border-radius:16px; background:#000;
+    box-shadow:0 30px 90px rgba(8,4,10,.75), 0 0 0 1px rgba(255,255,255,.08); }
+  #ytHolder{ position:fixed; display:none; z-index:6; border-radius:16px; overflow:hidden; background:#000; }
+  #ytHolder iframe{ width:100%; height:100%; display:block; }
   #obImport, #importText{ width:100%; min-height:150px; padding:14px; border-radius:14px; font:inherit;
     font-size:14px; color:#fff; background:var(--glass); border:1px solid var(--glass-border);
     outline:none; resize:vertical; text-align:left; }
@@ -460,6 +472,14 @@
       <button class="pbtn danger" id="resetBtn">Delete &amp; restart</button>
     </div>
     <label class="toggle"><input type="checkbox" id="origOnly"> Only original songs — hide covers &amp; remixes</label>
+    <div class="listhead" style="margin-left:0">Music source</div>
+    <div id="engineRow" class="moodrow"></div>
+    <div id="ytKeyWrap" style="display:none; margin-top:10px">
+      <input id="ytKey" type="text" placeholder="Paste your YouTube Data API v3 key" autocomplete="off">
+      <p class="imp-hint" style="margin-top:8px">YouTube plays full songs with video, but each key gets ~100 searches/day.
+      Free key: console.cloud.google.com → new project → enable "YouTube Data API v3" → Credentials → API key.
+      In the key settings, restrict it to your website so nobody else can use it.</p>
+    </div>
     <div class="listhead" style="margin-left:0">Vibe right now</div>
     <div id="moodRow" class="moodrow"></div>
     <div class="listhead" style="margin-left:0">Language right now</div>
@@ -499,6 +519,7 @@
 <div id="impBar" class="hide"><i></i><span></span></div>
 
 <div id="toast"></div>
+<div id="ytHolder"><div id="ytFrame"></div></div>
 <audio id="player"></audio>
 
 <script>
@@ -517,6 +538,9 @@ store.tasteSeeds ||= []; store.searchLiked ||= []; store.interactions ||= 0; sto
 store.recentlyPlayed ||= []; store.originalsOnly ??= false;
 store.prefs ||= { genres:[], langs:[], eras:[] };   // raw onboarding answers — drive combined seeds
 store.volume ??= 100;
+store.eras ||= {}; store.langs ||= {};              // era + language score dimensions
+store.engine ||= "apple"; store.ytKey ||= "";       // music source engine
+store.dislikedIds ||= []; store.dislikedTitles ||= [];   // permanent — a disliked song never returns
 const haptic = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch(_){} };
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 
@@ -545,12 +569,14 @@ const shownTitles = new Set();     // titles already fed this session
 const artistStrikes = {};          // 2 quick-skips of an artist this session → bench them
 function rejectTrack(t){
   const nt = normTitle(t.trackName);
+  if (store.dislikedIds.includes(t.trackId) || store.dislikedTitles.includes(nt)) return true;   // disliked = gone forever
   if (skippedTitles.has(nt)) return true;                       // they told us no — stop offering versions of it
   if ((artistStrikes[t.artistName]||0) >= 2) return true;       // artist benched until a positive signal
   // compilation releases ("Various Artists") carry generic compilation artwork, not the song's real cover
   if ((t.collectionArtistName || "").toLowerCase().includes("various")) return true;
   // active language locks: only tracks confirmed to match one of the locked languages
-  if (langLocks.length && !langLocks.some(l => langMatches(t, l))) return true;
+  // (YouTube results carry no genre metadata — seeds are already language-scoped there)
+  if (langLocks.length && t.primaryGenreName !== "YouTube" && !langLocks.some(l => langMatches(t, l))) return true;
   if (store.originalsOnly && shownTitles.has(nt)) return true;  // originals only: one version per session, ever
   const isCoverish = COVERISH.test(t.trackName) || REMIXISH.test(t.trackName);
   if (!isCoverish) return false;
@@ -562,13 +588,22 @@ function rejectTrack(t){
 /* ---------- learning engine ---------- */
 // ponytail: weighted keyword scores in localStorage; a collaborative-filtering
 // backend replaces this when there is more than one user.
-const SIGNALS = { relisten:5, follow:4, like:3, continue:2.5, save:2, share:2, fullListen:1.5, bgListen:.4, quickSkip:-2, skip:-.3 };
+const SIGNALS = { relisten:5, follow:4, like:3, continue:2.5, save:2, share:2, fullListen:1.5, bgListen:.4, quickSkip:-2, skip:-.3, dislike:-6 };
+function trackDecade(t){
+  const y = new Date(t.releaseDate || "").getFullYear();
+  if (!y || isNaN(y)) return null;
+  return y >= 2020 ? "2020s" : y >= 2010 ? "2010s" : y >= 2000 ? "2000s" : y >= 1990 ? "90s" : "classic";
+}
 function learn(track, signal){
   const lr = store.interactions < 30 ? 1.8 : 1;          // taste locks in fast early
   const w = (SIGNALS[signal] || 0) * lr;
-  for (const m of [store.genres, store.artists]) for (const k in m) m[k] *= .995;  // gentle decay
+  for (const m of [store.genres, store.artists, store.eras, store.langs]) for (const k in m) m[k] *= .995;  // gentle decay
   bump(store.genres, track.primaryGenreName, w);
   bump(store.artists, track.artistName, w * 1.3);
+  // minimal side-signals: the song's era and detected language also earn points
+  const dec = trackDecade(track);
+  if (dec) bump(store.eras, dec, w * .4);
+  for (const L in LANG_MATCH) if (L !== "English" && langMatches(track, L)) bump(store.langs, L, w * .4);
   if (w > 0){   // any positive signal = renewed interest, clear session benches
     store.interactions++;
     artistStrikes[track.artistName] = 0;
@@ -590,6 +625,8 @@ const GENRES = {
 const ITUNES_GENRE = { "Pop":"Pop","Hip-Hop":"Hip-Hop/Rap","Rock":"Rock","Indie":"Alternative","Electronic":"Dance",
   "R&B":"R&B/Soul","Bollywood":"Bollywood","Punjabi":"Punjabi","K-Pop":"K-Pop","Latin":"Latin","Country":"Country","Lo-fi":"Electronic" };
 const ERAS = { "Fresh 2020s":"2025 hits","2010s":"2010s throwback hits","2000s":"2000s hits","90s":"90s hits","Timeless":"greatest hits of all time" };
+const ERA_KEY = { "Fresh 2020s":"2020s","2010s":"2010s","2000s":"2000s","90s":"90s","Timeless":"classic" };   // onboarding label → decade score key
+const ERA_SEED = { "2020s":"2025 hits","2010s":"2010s throwback hits","2000s":"2000s hits","90s":"90s hits","classic":"greatest hits of all time" };
 const LANGS = { "English":"english pop hits","Hindi":"hindi hits","Punjabi":"punjabi hits","Spanish":"spanish hits",
   "Korean":"kpop hits","Tamil":"tamil hits","Telugu":"telugu hits","Arabic":"arabic hits","French":"french pop hits",
   "Japanese":"japanese pop hits","Portuguese":"brazilian hits","Afrobeats":"afrobeats hits" };
@@ -628,6 +665,9 @@ if (store.onboarded && !store.prefs.langs.length && !store.prefs.genres.length &
   for (const [label, seeds] of Object.entries(GENRES)) if (seeds.some(s => store.tasteSeeds.includes(s))) store.prefs.genres.push(label);
   if (store.prefs.langs.length || store.prefs.genres.length) buildComboSeeds();
 }
+// seed the era/language score maps from onboarding answers (minimal weights, once)
+if (!Object.keys(store.eras).length) store.prefs.eras.forEach(e => bump(store.eras, ERA_KEY[e], 4));
+if (!Object.keys(store.langs).length) store.prefs.langs.forEach(l => bump(store.langs, l, 4));
 let mood = null;
 let langLocks = [];   // session language locks (multi) — "only hindi + punjabi right now"
 let reassess = 0;   // when >0, next seeds pull fresh/random songs to re-read the user (logo tap)
@@ -681,6 +721,8 @@ function nextSeed(){
     ...store.followed.slice(-4),
     ...topKeys(store.artists, 5),
     ...topKeys(store.genres, 3).map(g => langify(g.split("/")[0].toLowerCase() + " hits")),
+    ...topKeys(store.eras, 2).map(d => langify(ERA_SEED[d] || "")).filter(Boolean),   // learned era taste
+    ...topKeys(store.langs, 2).map(l => ROOTS.lang[l] ? ROOTS.lang[l] + " hits" : "").filter(Boolean),   // learned language taste
   ].filter(Boolean);
   const explore = [...store.tasteSeeds.map(langify), ...(mood ? MOODS[mood].map(langify) : []), ...TRENDING.map(langify)];
   const h = new Date().getHours();
@@ -741,6 +783,35 @@ async function searchTracks(term, limit = 25){
   }
 }
 
+/* ---------- youtube engine: search (user's own API key, quota ~100 searches/day) ---------- */
+const decodeHtml = s => { const ta = document.createElement("textarea"); ta.innerHTML = s; return ta.value; };
+async function searchTracksYT(term, limit = 25){
+  if (!store.ytKey) throw new Error("no yt key");
+  const key = "yt|" + term;
+  const hit = seedCache.get(key);
+  if (hit && Date.now() - hit.ts < 600000) return hit.tracks;
+  const u = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=${limit}&q=${encodeURIComponent(term)}&key=${encodeURIComponent(store.ytKey)}`;
+  const r = await fetch(u, { signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error("yt quota/key");
+  const j = await r.json();
+  const tracks = (j.items || []).filter(it => it.id?.videoId).map(it => ({
+    trackId: "yt_" + it.id.videoId,
+    ytId: it.id.videoId,
+    trackName: decodeHtml(it.snippet.title).replace(/\(.*?\)|\[.*?\]/g, " ").replace(/\s{2,}/g, " ").trim(),
+    artistName: decodeHtml(it.snippet.channelTitle || "").replace(/\s*-\s*topic$/i, ""),
+    artworkUrl100: it.snippet.thumbnails?.medium?.url || "",
+    primaryGenreName: "YouTube",
+    previewUrl: "", trackViewUrl: "https://www.youtube.com/watch?v=" + it.id.videoId,
+    releaseDate: it.snippet.publishedAt,
+  }));
+  seedCache.set(key, { tracks, ts: Date.now() });
+  return tracks;
+}
+// engine dispatcher — the whole feed pipeline runs through this
+function engineSearch(term){
+  return store.engine === "youtube" && store.ytKey ? searchTracksYT(term) : searchTracks(term);
+}
+
 /* ---------- feed ---------- */
 const feed = $("#feed"), player = $("#player");
 const seen = new Set(store.seen);          // no-repeat memory (last ~800 tracks)
@@ -752,7 +823,7 @@ async function refillOnce(){
   if (fetching) return 0;
   fetching = true; let added = 0;
   try {
-    const tracks = await searchTracks(nextSeed());
+    const tracks = await engineSearch(nextSeed());
     const perArtist = {}, perTitle = {};   // cap per batch: no artist floods, no duplicate titles
     // artists get more feed slots only once the user has shown real interest in them
     const interestedIn = a => store.followed.includes(a) || store.searchLiked.includes(a) || (store.artists[a]||0) > 2;
@@ -815,13 +886,15 @@ async function bootFeed(){
 }
 $("#retryBtn").onclick = () => { showOffline(false); backoffUntil = 0; bootFeed(); };
 
-const artUrl = (t, size) => (t.artworkUrl100 || "").replace("100x100", size + "x" + size);
+const artUrl = (t, size) => t.ytId
+  ? `https://i.ytimg.com/vi/${t.ytId}/hqdefault.jpg`
+  : (t.artworkUrl100 || "").replace("100x100", size + "x" + size);
 function deepLinks(t){
   const q = encodeURIComponent(t.artistName + " " + t.trackName);
   return {
-    yt: "https://www.youtube.com/results?search_query=" + q,
+    yt: t.ytId ? "https://www.youtube.com/watch?v=" + t.ytId : "https://www.youtube.com/results?search_query=" + q,
     sp: "https://open.spotify.com/search/" + q,
-    ap: t.trackViewUrl || "https://music.apple.com/search?term=" + q
+    ap: (!t.ytId && t.trackViewUrl) || "https://music.apple.com/search?term=" + q
   };
 }
 
@@ -836,7 +909,8 @@ function makeCard(t){
     <div class="ambient" style="background-image:url('${artUrl(t,200)}')"></div>
     <div class="reel">
       <div class="bg" style="background-image:url('${artUrl(t,200)}')"></div>
-      <img class="art" src="${artUrl(t,600)}" alt="Album artwork for ${esc(t.trackName)}" draggable="false">
+      ${t.ytId ? '<div class="ytslot"></div>'
+               : `<img class="art" src="${artUrl(t,600)}" alt="Album artwork for ${esc(t.trackName)}" draggable="false">`}
       <div class="meta">
         <div class="title">${esc(t.trackName)}</div>
         <div class="artist ${isFollowed ? "followed" : ""}">${esc(t.artistName)}</div>
@@ -846,19 +920,22 @@ function makeCard(t){
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
-        <button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>
+        ${t.ytId ? "" : `<button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>`}
         <div class="links">
           <span>Full song</span>
-          <a class="yt" href="${L.yt}" target="_blank" rel="noopener">YouTube</a>
-          <a class="sp" href="${L.sp}" target="_blank" rel="noopener">Spotify</a>
-          <a class="ap" href="${L.ap}" target="_blank" rel="noopener">Apple Music</a>
+          <a class="yt" href="${L.yt}" target="_blank" rel="noopener" title="YouTube" aria-label="Full song on YouTube"><i class="ph-fill ph-youtube-logo"></i></a>
+          <a class="sp" href="${L.sp}" target="_blank" rel="noopener" title="Spotify" aria-label="Full song on Spotify"><i class="ph-fill ph-spotify-logo"></i></a>
+          <a class="ap" href="${L.ap}" target="_blank" rel="noopener" title="Apple Music" aria-label="Full song on Apple Music"><i class="ph-fill ph-apple-logo"></i></a>
         </div>
-        <div class="credit">Preview courtesy of <a href="${L.ap}" target="_blank" rel="noopener">Apple Music</a> · all data stays on your device</div>
+        <div class="credit">${t.ytId
+          ? `Video via <a href="${L.yt}" target="_blank" rel="noopener">YouTube</a> · all data stays on your device`
+          : `Preview courtesy of <a href="${L.ap}" target="_blank" rel="noopener">Apple Music</a> · all data stays on your device`}</div>
       </div>
       <div class="progress"></div>
     </div>
     <div class="rail">
       <button class="act ${isLiked ? "on" : ""}" data-a="like"><span class="ic"><i class="ph-fill ph-heart"></i></span>Like</button>
+      <button class="act" data-a="dislike"><span class="ic"><i class="ph ph-thumbs-down"></i></span>Nope</button>
       <button class="act ${isSaved ? "on" : ""}" data-a="save"><span class="ic"><i class="ph ph-list-plus"></i></span>Save</button>
       <button class="act ${isFollowed ? "on" : ""}" data-a="follow"><span class="ic"><i class="ph ph-user-plus"></i></span>Follow</button>
       <button class="act" data-a="more"><span class="ic"><i class="ph ph-waveform"></i></span>More</button>
@@ -867,7 +944,7 @@ function makeCard(t){
   el._track = t;
 
   const art = el.querySelector(".art");
-  art.onerror = () => { art.onerror = null; art.src = t.artworkUrl100 || "icon.svg"; };   // never a broken cover
+  if (art) art.onerror = () => { art.onerror = null; art.src = t.artworkUrl100 || "icon.svg"; };   // never a broken cover
 
   // whole song is tappable (Instagram-style): single tap = play/pause, double tap = like.
   // 280ms window tells them apart; taps on the controls are ignored.
@@ -876,9 +953,10 @@ function makeCard(t){
     if (e.target.closest(".continue, .links, button, a")) return;   // let controls do their own thing
     const now = Date.now();
     if (now - lastTap < 280){ lastTap = 0; clearTimeout(tapT); doubleTapLike(el, t); }
-    else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(() => player.paused ? player.play() : player.pause(), 280); }
+    else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(engineToggle, 280); }
   });
-  el.querySelector(".continue").onclick = e => {
+  const cont = el.querySelector(".continue");
+  if (cont) cont.onclick = e => {
     continued = true; learn(t, "continue");
     const btn = e.target.closest(".continue");
     btn.classList.add("on");
@@ -903,7 +981,8 @@ function makeCard(t){
 
 function slimTrack(t){
   return { trackId:t.trackId, trackName:t.trackName, artistName:t.artistName, artworkUrl100:t.artworkUrl100,
-    previewUrl:t.previewUrl, primaryGenreName:t.primaryGenreName, trackViewUrl:t.trackViewUrl };
+    previewUrl:t.previewUrl, primaryGenreName:t.primaryGenreName, trackViewUrl:t.trackViewUrl,
+    releaseDate:t.releaseDate, ytId:t.ytId };
 }
 function doubleTapLike(el, t){
   haptic(22);
@@ -944,6 +1023,19 @@ function action(a, t, btn){
       if (fromSearch) prioritizeSearch(t);
     }
     save();
+  } else if (a === "dislike"){
+    // never again: block the exact song + same-name versions, big hit to the artist
+    if (!store.dislikedIds.includes(t.trackId)) store.dislikedIds.push(t.trackId);
+    const nt = normTitle(t.trackName);
+    if (!store.dislikedTitles.includes(nt)) store.dislikedTitles.push(nt);
+    learn(t, "dislike"); save(); haptic(20);
+    // purge queued and upcoming cards that match
+    queue = queue.filter(x => normTitle(x.trackName) !== nt);
+    [...feed.children].forEach(c => {
+      if (c !== current && c._track && normTitle(c._track.trackName) === nt){ io.unobserve(c); c.remove(); }
+    });
+    toast("Never again 👋");
+    next();
   } else if (a === "more"){
     moreLikeThis(t);
   } else if (a === "share"){
@@ -1089,7 +1181,7 @@ function playCard(el){
   }
   clearTimeout(adTimer);
   if (el._ad){   // ad/notice card: pause music; ads auto-advance, notices wait for the user
-    current = el; player.pause();
+    current = el; player.pause(); ytStop();
     if (!el._stay){
       const p = el.querySelector(".progress");
       p.style.transition = "width 6s linear";
@@ -1108,25 +1200,61 @@ function playCard(el){
 
   current = el; continued = false; playStart = Date.now();
   showOffline(false);
+  $("#boot").classList.add("hide");
   recordRecent(el._track);
-  updateMediaSession(el._track);
-  player.src = el._track.previewUrl;
-  player.play().then(() => el.classList.add("playing")).catch(()=>{});
+  if (el._track.ytId){
+    player.pause();
+    ytPlay(el);
+    el.classList.add("playing");
+  } else {
+    ytStop();
+    updateMediaSession(el._track);
+    player.src = el._track.previewUrl;
+    player.play().then(() => el.classList.add("playing")).catch(()=>{});
+  }
   ensureAhead();
   while (feed.children.length > 30 && feed.firstChild !== el){ io.unobserve(feed.firstChild); feed.firstChild.remove(); }
 }
 
 player.addEventListener("timeupdate", () => {
-  if (!current || !player.duration) return;
+  if (!current || !player.duration || current._track?.ytId) return;
   const cap = continued ? player.duration : Math.min(HOOK_SECONDS, player.duration);
   current.querySelector(".progress").style.width = Math.min(100, player.currentTime / cap * 100) + "%";
   if (player.currentTime >= cap) next();
 });
 player.addEventListener("ended", next);
-player.addEventListener("error", () => { if (current && current._track) next(); });   // dead preview URL: skip, don't stall
-player.addEventListener("pause", () => current && current.classList.add("paused"));
-player.addEventListener("play",  () => current && current.classList.remove("paused"));
+player.addEventListener("error", () => { if (current && current._track && !current._track.ytId) next(); });   // dead preview URL: skip, don't stall
+// pausing a song for a long time (not via sleep timer) = mild disinterest
+let pauseTimer = null, pausedBySleep = false;
+player.addEventListener("pause", () => {
+  if (!current) return;
+  current.classList.add("paused");
+  clearTimeout(pauseTimer);
+  if (!pausedBySleep && current._track){
+    const t = current._track;
+    pauseTimer = setTimeout(() => {
+      bump(store.genres, t.primaryGenreName, -.5);
+      bump(store.artists, t.artistName, -.7);
+      save();
+    }, 5 * 60000);
+  }
+});
+player.addEventListener("play", () => {
+  pausedBySleep = false; clearTimeout(pauseTimer);
+  current && current.classList.remove("paused");
+});
 // keeps playing in the background — no visibilitychange pause
+
+// closing/leaving the site mid-session: mild negative for the current song and
+// the couple before it (they made the user leave); background listening is exempt
+addEventListener("pagehide", () => {
+  if (!player.paused) return;   // music still playing = background listening, not a leave signal
+  store.recentlyPlayed.slice(0, 3).forEach((t, i) => {
+    bump(store.genres, t.primaryGenreName, -.5 / (i + 1));
+    bump(store.artists, t.artistName, -.6 / (i + 1));
+  });
+  save();
+});
 
 function next(){
   const i = [...feed.children].indexOf(current);
@@ -1136,6 +1264,72 @@ function next(){
   if (!nx) return;
   nx.scrollIntoView(document.hidden ? {} : { behavior:"smooth" });
   if (document.hidden) playCard(nx);   // IO doesn't fire while hidden — advance directly
+}
+
+/* ---------- youtube engine: single persistent IFrame player ---------- */
+// ponytail: one player fixed-positioned over the active card's slot — moving an
+// iframe in the DOM reloads it, so we position instead of reparent.
+let ytPlayer = null, ytReadyCbs = [], ytProg = null;
+function ensureYT(cb){
+  if (ytPlayer) return cb();
+  ytReadyCbs.push(cb);
+  if (window._ytLoading) return;
+  window._ytLoading = true;
+  window.onYouTubeIframeAPIReady = () => {
+    ytPlayer = new YT.Player("ytFrame", {
+      width:"100%", height:"100%",
+      playerVars:{ autoplay:1, playsinline:1, rel:0 },
+      events:{
+        onReady: () => { ytReadyCbs.forEach(f => f()); ytReadyCbs = []; },
+        onStateChange: e => {
+          if (e.data === YT.PlayerState.ENDED) next();
+          if (e.data === YT.PlayerState.PLAYING){ current?.classList.add("playing"); current?.classList.remove("paused"); startYtProgress(); }
+          if (e.data === YT.PlayerState.PAUSED) current?.classList.add("paused");
+        }
+      }
+    });
+  };
+  const s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(s);
+}
+function positionYtHolder(){
+  const slot = current?.querySelector(".ytslot");
+  const h = $("#ytHolder");
+  if (!slot){ h.style.display = "none"; return; }
+  const r = slot.getBoundingClientRect();
+  Object.assign(h.style, { display:"block", top:r.top+"px", left:r.left+"px", width:r.width+"px", height:r.height+"px" });
+}
+function ytPlay(el){
+  ensureYT(() => {
+    ytPlayer.loadVideoById(el._track.ytId);
+    positionYtHolder();
+    setTimeout(positionYtHolder, 450);   // re-measure once the scroll-snap settles
+  });
+}
+function ytStop(){
+  $("#ytHolder").style.display = "none";
+  clearInterval(ytProg);
+  if (ytPlayer?.stopVideo) try { ytPlayer.stopVideo(); } catch(e){}
+}
+function startYtProgress(){
+  clearInterval(ytProg);
+  ytProg = setInterval(() => {
+    if (!current?._track?.ytId || !ytPlayer?.getDuration) return;
+    const d = ytPlayer.getDuration();
+    if (d) current.querySelector(".progress").style.width = (ytPlayer.getCurrentTime() / d * 100) + "%";
+  }, 500);
+}
+// keep the player glued to its slot while the user swipes
+feed.addEventListener("scroll", () => { if (current?._track?.ytId) requestAnimationFrame(positionYtHolder); }, { passive:true });
+addEventListener("resize", positionYtHolder);
+// one pause/play switch that respects whichever engine is playing
+function engineToggle(){
+  if (current?._track?.ytId && ytPlayer){
+    ytPlayer.getPlayerState() === 1 ? ytPlayer.pauseVideo() : ytPlayer.playVideo();
+  } else {
+    player.paused ? player.play() : player.pause();
+  }
 }
 
 /* lock-screen / background media controls */
@@ -1164,7 +1358,7 @@ document.addEventListener("keydown", e => {
   } else if (e.code === "Space"){
     e.preventDefault();
     if (current && current._ad) return;   // no audio on ad cards
-    player.paused ? player.play() : player.pause();
+    engineToggle();
   } else if (e.key.toLowerCase() === "l" && current && current._track){
     action("like", current._track, current.querySelector('[data-a="like"]'));
   }
@@ -1234,7 +1428,7 @@ function renderProfile(){
     (store.searchLiked.length ? `<br>Chasing: ${esc(store.searchLiked.slice(0,3).join(", "))}` : "");
   $("#learnFill").style.width = Math.min(100, n / BOOTSTRAP * 100) + "%";
   $("#origOnly").checked = store.originalsOnly;
-  renderMoodRow(); renderLangRow(); renderSleepRow();
+  renderMoodRow(); renderLangRow(); renderSleepRow(); renderEngineRow();
 
   const el = $("#profileList");
   // keep sections the user opened expanded across re-renders (e.g. removing songs)
@@ -1621,12 +1815,41 @@ $("#dailyBtn").onclick = async () => {
   first.scrollIntoView(); playCard(first);
 };
 
+/* ---------- music source engine picker ---------- */
+const ENGINES = {
+  apple:   { label:"Apple — instant hooks",       note:"Fast 20s previews, unlimited discovery" },
+  youtube: { label:"YouTube — full songs + video", note:"Full tracks with video · ~100 searches/day per key" },
+};
+function renderEngineRow(){
+  const row = $("#engineRow"); row.innerHTML = "";
+  for (const [k, e] of Object.entries(ENGINES)){
+    const b = document.createElement("button");
+    b.className = "chip" + (store.engine === k ? " sel" : "");
+    b.textContent = e.label;
+    b.onclick = () => {
+      if (k === "youtube" && !store.ytKey.trim()){
+        $("#ytKeyWrap").style.display = "";
+        $("#ytKey").focus();
+        toast("Paste your YouTube API key first");
+        return;
+      }
+      store.engine = k; save();
+      renderEngineRow(); toast(e.note);
+      resetUpcoming(); ensureAhead();
+    };
+    row.appendChild(b);
+  }
+  $("#ytKeyWrap").style.display = store.engine === "youtube" || !store.ytKey ? "" : "none";
+}
+$("#ytKey").value = store.ytKey;
+$("#ytKey").oninput = e => { store.ytKey = e.target.value.trim(); save(); };
+
 /* ---------- sleep timer (session-only) ---------- */
 let sleepT = null, sleepSel = null;
 function armSleep(min){
   clearTimeout(sleepT); sleepT = null;
   sleepSel = min > 0 ? min + " min" : null;
-  if (min > 0) sleepT = setTimeout(() => { player.pause(); sleepSel = null; renderSleepRow(); toast("Sleep timer: music paused 😴"); }, min * 60000);
+  if (min > 0) sleepT = setTimeout(() => { pausedBySleep = true; player.pause(); sleepSel = null; renderSleepRow(); toast("Sleep timer: music paused 😴"); }, min * 60000);
   renderSleepRow();
   toast(sleepSel ? "Music stops in " + sleepSel : "Sleep timer off");
 }
@@ -1722,10 +1945,10 @@ $("#startNext").onclick = async () => {
       for (const g of picked[0]){ bump(store.genres, ITUNES_GENRE[g], 6); store.tasteSeeds.push(...GENRES[g]); }
     } else if (step === 1){
       store.prefs.langs = [...picked[1]];
-      for (const l of picked[1]) store.tasteSeeds.push(LANGS[l]);
+      for (const l of picked[1]){ store.tasteSeeds.push(LANGS[l]); bump(store.langs, l, 4); }
     } else if (step === 2){
       store.prefs.eras = [...picked[2]];
-      for (const e of picked[2]) store.tasteSeeds.push(ERAS[e]);
+      for (const e of picked[2]){ store.tasteSeeds.push(ERAS[e]); bump(store.eras, ERA_KEY[e], 4); }
     } else if (step === 3){
       const txt = $("#obImport")?.value.trim();
       if (txt && !importing){
