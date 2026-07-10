@@ -241,9 +241,11 @@
 
   /* youtube engine: one persistent player, fixed-positioned over the active card's slot
      (iframes reload if moved in the DOM, so we position instead of reparent) */
-  .ytslot{ width:100%; max-width:min(88vw,420px); aspect-ratio:16/9; align-self:center; margin-top:auto;
-    border-radius:16px; background:#000;
+  /* mobile: clears the right action rail, vertically centred in the space above the text */
+  .ytslot{ width:calc(100% - 62px); max-width:420px; aspect-ratio:16/9; align-self:flex-start;
+    margin:auto 0; border-radius:16px; background:#000;
     box-shadow:0 30px 90px rgba(8,4,10,.75), 0 0 0 1px rgba(255,255,255,.08); }
+  @media (min-width:820px){ .ytslot{ width:100%; align-self:center; } }
   #ytHolder{ position:fixed; display:none; z-index:6; border-radius:16px; overflow:hidden; background:#000; }
   #ytHolder iframe{ width:100%; height:100%; display:block; }
   #obImport, #importText{ width:100%; min-height:150px; padding:14px; border-radius:14px; font:inherit;
@@ -340,17 +342,12 @@
     background:var(--glass); border:1px solid var(--glass-border); outline:none; }
   .sleepInp:focus{ border-color:var(--accent); }
 
-  /* double-tap-to-like heart */
-  .heart-pop{ position:absolute; left:50%; top:44%; z-index:4; font-size:130px; color:var(--accent);
-    opacity:0; pointer-events:none; transform:translate(-50%,-50%) scale(.3);
+  /* double-tap-to-like heart — .reel > .heart-pop wins the specificity fight against
+     the generic .reel > *:not(.bg){position:relative} rule, so it never reflows the card */
+  .reel > .heart-pop{ position:absolute; left:50%; top:44%; z-index:4; font-size:110px; color:var(--accent);
+    opacity:0; pointer-events:none; line-height:0; will-change:transform;
     filter:drop-shadow(0 10px 34px rgba(230,69,90,.6)); }
-  .heart-pop.go{ animation:heartpop .8s ease-out forwards; }
-  @keyframes heartpop{
-    0%{ opacity:0; transform:translate(-50%,-50%) scale(.3); }
-    22%{ opacity:1; transform:translate(-50%,-50%) scale(1.12); }
-    62%{ opacity:1; transform:translate(-50%,-50%) scale(1); }
-    100%{ opacity:0; transform:translate(-50%,-62%) scale(1); }
-  }
+  .heart-pop i{ line-height:1; display:block; }
 
   /* API-unreachable state */
   #offline{ position:fixed; inset:0; z-index:25; display:grid; place-items:center; padding:24px;
@@ -480,6 +477,7 @@
       Free key: console.cloud.google.com → new project → enable "YouTube Data API v3" → Credentials → API key.
       In the key settings, restrict it to your website so nobody else can use it.</p>
     </div>
+    <button class="pbtn" id="spBtn" style="width:100%; margin-top:10px"></button>
     <div class="listhead" style="margin-left:0">Vibe right now</div>
     <div id="moodRow" class="moodrow"></div>
     <div class="listhead" style="margin-left:0">Language right now</div>
@@ -988,15 +986,25 @@ function slimTrack(t){
     previewUrl:t.previewUrl, primaryGenreName:t.primaryGenreName, trackViewUrl:t.trackViewUrl,
     releaseDate:t.releaseDate, ytId:t.ytId, spUri:t.spUri, artworkBig:t.artworkBig };
 }
+// instagram-style: heart pops in the centre, then flies into the like icon
 function doubleTapLike(el, t){
   haptic(22);
   const lb = el.querySelector('[data-a="like"]');
   if (!store.liked.some(x => x.trackId === t.trackId)) action("like", t, lb);   // like only if not already
+  const reel = el.querySelector(".reel");
   const h = document.createElement("div");
-  h.className = "heart-pop"; h.textContent = "♥";
-  el.querySelector(".reel").appendChild(h);
-  requestAnimationFrame(() => h.classList.add("go"));
-  setTimeout(() => h.remove(), 800);
+  h.className = "heart-pop"; h.innerHTML = '<i class="ph-fill ph-heart"></i>';
+  reel.appendChild(h);
+  const rr = reel.getBoundingClientRect();
+  const ir = lb.querySelector(".ic").getBoundingClientRect();
+  const dx = (ir.left + ir.width / 2) - (rr.left + rr.width / 2);
+  const dy = (ir.top + ir.height / 2) - (rr.top + rr.height * .44);
+  h.animate([
+    { transform:"translate(-50%,-50%) scale(.2)",  opacity:0 },
+    { transform:"translate(-50%,-50%) scale(1.15)", opacity:1, offset:.22 },
+    { transform:"translate(-50%,-50%) scale(1)",   opacity:1, offset:.55 },
+    { transform:`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.1)`, opacity:.85 },
+  ], { duration:850, easing:"cubic-bezier(.3,.7,.3,1)" }).onfinish = () => { h.remove(); popIc(lb); };
 }
 // springy bounce on the tapped rail icon — feedback you can feel
 const popIc = btn => btn?.querySelector(".ic")?.animate(
@@ -1575,7 +1583,7 @@ function renderProfile(){
     (store.searchLiked.length ? `<br>Chasing: ${esc(store.searchLiked.slice(0,3).join(", "))}` : "");
   $("#learnFill").style.width = Math.min(100, n / BOOTSTRAP * 100) + "%";
   $("#origOnly").checked = store.originalsOnly;
-  renderMoodRow(); renderLangRow(); renderSleepRow(); renderEngineRow();
+  renderMoodRow(); renderLangRow(); renderSleepRow(); renderEngineRow(); renderSpBtn();
 
   const el = $("#profileList");
   // keep sections the user opened expanded across re-renders (e.g. removing songs)
@@ -1992,6 +2000,23 @@ function renderEngineRow(){
 }
 $("#ytKey").value = store.ytKey;
 $("#ytKey").oninput = e => { store.ytKey = e.target.value.trim(); save(); };
+
+// visible connect/disconnect procedure for Spotify
+function renderSpBtn(){
+  const b = $("#spBtn");
+  if (store.spTokens){
+    b.innerHTML = '<i class="ph-fill ph-spotify-logo"></i> Spotify connected ✓ · tap to disconnect';
+    b.onclick = async () => {
+      if (!await askConfirm("Disconnect Spotify?", "Your imported taste stays — only the account link is removed.", "Disconnect")) return;
+      store.spTokens = null;
+      if (store.engine === "spotify"){ store.engine = "apple"; resetUpcoming(); ensureAhead(); }
+      save(); renderSpBtn(); renderEngineRow(); toast("Spotify disconnected");
+    };
+  } else {
+    b.innerHTML = '<i class="ph-fill ph-spotify-logo"></i> Connect Spotify — import your taste instantly';
+    b.onclick = spConnect;
+  }
+}
 
 /* ---------- sleep timer (session-only) ---------- */
 let sleepT = null, sleepSel = null;
