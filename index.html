@@ -153,6 +153,9 @@
 
   .progress{ position:absolute; bottom:0; left:0; height:2px; width:0%;
     background:linear-gradient(90deg,var(--accent),var(--accent-soft)); }
+  /* interactive seek bar on song cards — drag anywhere in the track, including back to 0 */
+  .seek{ position:absolute; bottom:4px; left:14px; right:14px; width:calc(100% - 28px);
+    height:18px; margin:0; z-index:3; accent-color:var(--accent); cursor:pointer; background:transparent; }
 
   /* ---------- desktop: proper reels panel, everything centred under the cover ---------- */
   @media (min-width:820px){
@@ -525,6 +528,14 @@
 const $ = s => document.querySelector(s);
 const pick = a => a[Math.floor(Math.random() * a.length)];
 const HOOK_SECONDS = 20;
+// full-track engines: neither API exposes "most replayed" — start ~28% in,
+// where choruses statistically live, and play a 30s hook window
+const HOOK_FRACTION = .28, ENGINE_HOOK_PLAY = 30;
+function hookStartFor(t){
+  const d = t.duration || (t.durationMs || 0) / 1000;
+  if (!d) return 0;
+  return Math.min(Math.max(d * HOOK_FRACTION, 15), Math.max(d - 45, 0));
+}
 const BOOTSTRAP = 18;   // songs of onboarding-guided exploration before taste takes over
 
 /* ---------- persistent state ---------- */
@@ -792,7 +803,18 @@ async function searchTracksYT(term, limit = 25){
   const r = await fetch(u, { signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error("yt quota/key");
   const j = await r.json();
+  // one cheap batch call gets all durations (needed for the hook start point)
+  const durations = {};
+  try {
+    const ids = (j.items || []).map(it => it.id?.videoId).filter(Boolean).join(",");
+    const dr = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(store.ytKey)}`, { signal: AbortSignal.timeout(15000) });
+    if (dr.ok) (await dr.json()).items?.forEach(v => {
+      const m = (v.contentDetails?.duration || "").match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      if (m) durations[v.id] = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+    });
+  } catch(e){}
   const tracks = (j.items || []).filter(it => it.id?.videoId).map(it => ({
+    duration: durations[it.id.videoId] || 0,
     trackId: "yt_" + it.id.videoId,
     ytId: it.id.videoId,
     trackName: decodeHtml(it.snippet.title).replace(/\(.*?\)|\[.*?\]/g, " ").replace(/\s{2,}/g, " ").trim(),
@@ -920,7 +942,7 @@ function makeCard(t){
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
-        ${(t.ytId || t.spUri) ? "" : `<button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>`}
+        <button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>
         <div class="links">
           <span>Full song</span>
           <a class="yt" href="${L.yt}" target="_blank" rel="noopener" title="YouTube" aria-label="Full song on YouTube"><i class="ph-fill ph-youtube-logo"></i></a>
@@ -933,7 +955,7 @@ function makeCard(t){
           ? `Full song via <a href="${L.sp}" target="_blank" rel="noopener">Spotify</a> · all data stays on your device`
           : `Preview courtesy of <a href="${L.ap}" target="_blank" rel="noopener">Apple Music</a> · all data stays on your device`}</div>
       </div>
-      <div class="progress"></div>
+      <input type="range" class="seek" min="0" max="1000" value="0" aria-label="Seek through the song">
     </div>
     <div class="rail">
       <button class="act ${isLiked ? "on" : ""}" data-a="like"><span class="ic"><i class="ph-fill ph-heart"></i></span>Like</button>
@@ -952,7 +974,7 @@ function makeCard(t){
   // 280ms window tells them apart; taps on the controls are ignored.
   let lastTap = 0, tapT = null;
   el.querySelector(".reel").addEventListener("click", e => {
-    if (e.target.closest(".continue, .links, button, a")) return;   // let controls do their own thing
+    if (e.target.closest(".continue, .links, button, a, input")) return;   // let controls do their own thing
     const now = Date.now();
     if (now - lastTap < 280){ lastTap = 0; clearTimeout(tapT); doubleTapLike(el, t); }
     else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(engineToggle, 280); }
@@ -962,8 +984,18 @@ function makeCard(t){
     continued = true; learn(t, "continue");
     const btn = e.target.closest(".continue");
     btn.classList.add("on");
-    btn.innerHTML = '<i class="ph ph-waveform"></i> Playing full preview';
-    if (player.paused) player.play();
+    btn.innerHTML = '<i class="ph ph-waveform"></i> ' + ((t.ytId || t.spUri) ? "Playing full song" : "Playing full preview");
+    if (t.ytId) ytPlayer?.playVideo?.();
+    else if (t.spUri) spPlayer?.resume?.();
+    else if (player.paused) player.play();
+  };
+  // drag the seek bar anywhere — seeking means they're exploring, so the hook cap lifts
+  el.querySelector(".seek").oninput = e => {
+    continued = true;
+    const f = +e.target.value / 1000;
+    if (t.ytId && ytPlayer?.getDuration) ytPlayer.seekTo(f * ytPlayer.getDuration(), true);
+    else if (t.spUri && spPlayer && t.durationMs) spPlayer.seek(f * t.durationMs);
+    else if (player.duration) player.currentTime = f * player.duration;
   };
   el.querySelector(".links").onclick = e => {   // wanting the full song = they like it
     if (!e.target.closest("a") || el._fullLiked) return;
@@ -984,7 +1016,8 @@ function makeCard(t){
 function slimTrack(t){
   return { trackId:t.trackId, trackName:t.trackName, artistName:t.artistName, artworkUrl100:t.artworkUrl100,
     previewUrl:t.previewUrl, primaryGenreName:t.primaryGenreName, trackViewUrl:t.trackViewUrl,
-    releaseDate:t.releaseDate, ytId:t.ytId, spUri:t.spUri, artworkBig:t.artworkBig };
+    releaseDate:t.releaseDate, ytId:t.ytId, spUri:t.spUri, artworkBig:t.artworkBig,
+    duration:t.duration, durationMs:t.durationMs };
 }
 // instagram-style: heart pops in the centre, then flies into the like icon
 function doubleTapLike(el, t){
@@ -1216,11 +1249,13 @@ function playCard(el){
   recordRecent(el._track);
   if (el._track.ytId){
     player.pause(); try{ spPlayer?.pause(); }catch(e){}
+    el._hookStart = hookStartFor(el._track);
     ytPlay(el);
     el.classList.add("playing");
   } else if (el._track.spUri){
     player.pause(); ytStop();
-    spPlayTrack(el._track.spUri);
+    el._hookStart = hookStartFor(el._track);
+    spPlayTrack(el._track.spUri, el._hookStart * 1000);
     el.classList.add("playing");
   } else {
     ytStop(); try{ spPlayer?.pause(); }catch(e){}
@@ -1235,7 +1270,8 @@ function playCard(el){
 player.addEventListener("timeupdate", () => {
   if (!current || !player.duration || current._track?.ytId || current._track?.spUri) return;
   const cap = continued ? player.duration : Math.min(HOOK_SECONDS, player.duration);
-  current.querySelector(".progress").style.width = Math.min(100, player.currentTime / cap * 100) + "%";
+  const s = current.querySelector(".seek");
+  if (s && !s.matches(":active")) s.value = Math.min(1000, player.currentTime / cap * 1000);
   if (player.currentTime >= cap) next();
 });
 player.addEventListener("ended", next);
@@ -1324,7 +1360,7 @@ function positionYtHolder(){
 }
 function ytPlay(el){
   ensureYT(() => {
-    ytPlayer.loadVideoById(el._track.ytId);
+    ytPlayer.loadVideoById({ videoId: el._track.ytId, startSeconds: el._hookStart || 0 });
     positionYtHolder();
     setTimeout(positionYtHolder, 450);   // re-measure once the scroll-snap settles
   });
@@ -1338,8 +1374,13 @@ function startYtProgress(){
   clearInterval(ytProg);
   ytProg = setInterval(() => {
     if (!current?._track?.ytId || !ytPlayer?.getDuration) return;
-    const d = ytPlayer.getDuration();
-    if (d) current.querySelector(".progress").style.width = (ytPlayer.getCurrentTime() / d * 100) + "%";
+    const d = ytPlayer.getDuration(), c = ytPlayer.getCurrentTime();
+    if (d){
+      const s = current.querySelector(".seek");
+      if (s && !s.matches(":active")) s.value = c / d * 1000;
+    }
+    // hook window: 30s from the hook start, then move on unless they engaged
+    if (!continued && current._hookStart != null && c > current._hookStart + ENGINE_HOOK_PLAY) next();
   }, 500);
 }
 // keep the player glued to its slot while the user swipes
@@ -1443,7 +1484,6 @@ function ensureSpotifyPlayer(cb){
     });
     spPlayer.addListener("player_state_changed", st => {
       if (!st || !current?._track?.spUri) return;
-      if (st.duration) current.querySelector(".progress").style.width = (st.position / st.duration * 100) + "%";
       current.classList.toggle("paused", st.paused && st.position > 0);
       // standard SDK end-of-track detection
       if (st.paused && st.position === 0 && st.track_window?.previous_tracks?.length && Date.now() - spEndGuard > 4000){
@@ -1456,16 +1496,26 @@ function ensureSpotifyPlayer(cb){
   s.src = "https://sdk.scdn.co/spotify-player.js";
   document.head.appendChild(s);
 }
-function spPlayTrack(uri){
+let spProg = null;
+function spPlayTrack(uri, positionMs = 0){
   ensureSpotifyPlayer(async () => {
     try {
       spPlayer.activateElement?.();   // mobile playback unlock
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spDeviceId}`, {
         method:"PUT",
         headers:{ Authorization:"Bearer " + await spAccess(), "Content-Type":"application/json" },
-        body: JSON.stringify({ uris:[uri] }),
+        body: JSON.stringify({ uris:[uri], position_ms: Math.round(positionMs) }),
       });
       current?.classList.add("playing");
+      clearInterval(spProg);
+      spProg = setInterval(async () => {   // seek-bar progress + hook window
+        if (!current?._track?.spUri) return clearInterval(spProg);
+        const st = await spPlayer.getCurrentState().catch(() => null);
+        if (!st) return;
+        const s = current.querySelector(".seek");
+        if (s && st.duration && !s.matches(":active")) s.value = st.position / st.duration * 1000;
+        if (!continued && current._hookStart != null && st.position / 1000 > current._hookStart + ENGINE_HOOK_PLAY) next();
+      }, 500);
     } catch(e){ toast("Playback failed — is this account Premium?"); }
   });
 }
@@ -1475,7 +1525,7 @@ async function spSearch(term){
   if (hit && Date.now() - hit.ts < 600000) return hit.tracks;
   const j = await spFetch("/search?type=track&limit=25&q=" + encodeURIComponent(term));
   const tracks = (j.tracks?.items || []).map(tr => ({
-    trackId:"sp_" + tr.id, spUri:tr.uri,
+    trackId:"sp_" + tr.id, spUri:tr.uri, durationMs:tr.duration_ms,
     trackName:tr.name, artistName:tr.artists?.[0]?.name || "",
     artworkUrl100: tr.album?.images?.at(-1)?.url || "",
     artworkBig: tr.album?.images?.[0]?.url || "",
