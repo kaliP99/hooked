@@ -575,8 +575,8 @@ function rejectTrack(t){
   // compilation releases ("Various Artists") carry generic compilation artwork, not the song's real cover
   if ((t.collectionArtistName || "").toLowerCase().includes("various")) return true;
   // active language locks: only tracks confirmed to match one of the locked languages
-  // (YouTube results carry no genre metadata — seeds are already language-scoped there)
-  if (langLocks.length && t.primaryGenreName !== "YouTube" && !langLocks.some(l => langMatches(t, l))) return true;
+  // (YouTube/Spotify results carry no usable genre metadata — seeds are already language-scoped there)
+  if (langLocks.length && !["YouTube","Spotify"].includes(t.primaryGenreName) && !langLocks.some(l => langMatches(t, l))) return true;
   if (store.originalsOnly && shownTitles.has(nt)) return true;  // originals only: one version per session, ever
   const isCoverish = COVERISH.test(t.trackName) || REMIXISH.test(t.trackName);
   if (!isCoverish) return false;
@@ -809,7 +809,9 @@ async function searchTracksYT(term, limit = 25){
 }
 // engine dispatcher — the whole feed pipeline runs through this
 function engineSearch(term){
-  return store.engine === "youtube" && store.ytKey ? searchTracksYT(term) : searchTracks(term);
+  if (store.engine === "youtube" && store.ytKey) return searchTracksYT(term);
+  if (store.engine === "spotify" && store.spTokens) return spSearch(term);
+  return searchTracks(term);
 }
 
 /* ---------- feed ---------- */
@@ -886,8 +888,8 @@ async function bootFeed(){
 }
 $("#retryBtn").onclick = () => { showOffline(false); backoffUntil = 0; bootFeed(); };
 
-const artUrl = (t, size) => t.ytId
-  ? `https://i.ytimg.com/vi/${t.ytId}/hqdefault.jpg`
+const artUrl = (t, size) => t.ytId ? `https://i.ytimg.com/vi/${t.ytId}/hqdefault.jpg`
+  : t.artworkBig && size > 100 ? t.artworkBig
   : (t.artworkUrl100 || "").replace("100x100", size + "x" + size);
 function deepLinks(t){
   const q = encodeURIComponent(t.artistName + " " + t.trackName);
@@ -920,7 +922,7 @@ function makeCard(t){
           ${mood ? `<span class="tag mood">${mood}</span>` : ""}
         </div>
         <div class="wave">${"<span></span>".repeat(9)}</div>
-        ${t.ytId ? "" : `<button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>`}
+        ${(t.ytId || t.spUri) ? "" : `<button class="continue"><i class="ph-fill ph-play"></i> Continue listening</button>`}
         <div class="links">
           <span>Full song</span>
           <a class="yt" href="${L.yt}" target="_blank" rel="noopener" title="YouTube" aria-label="Full song on YouTube"><i class="ph-fill ph-youtube-logo"></i></a>
@@ -929,6 +931,8 @@ function makeCard(t){
         </div>
         <div class="credit">${t.ytId
           ? `Video via <a href="${L.yt}" target="_blank" rel="noopener">YouTube</a> · all data stays on your device`
+          : t.spUri
+          ? `Full song via <a href="${L.sp}" target="_blank" rel="noopener">Spotify</a> · all data stays on your device`
           : `Preview courtesy of <a href="${L.ap}" target="_blank" rel="noopener">Apple Music</a> · all data stays on your device`}</div>
       </div>
       <div class="progress"></div>
@@ -982,7 +986,7 @@ function makeCard(t){
 function slimTrack(t){
   return { trackId:t.trackId, trackName:t.trackName, artistName:t.artistName, artworkUrl100:t.artworkUrl100,
     previewUrl:t.previewUrl, primaryGenreName:t.primaryGenreName, trackViewUrl:t.trackViewUrl,
-    releaseDate:t.releaseDate, ytId:t.ytId };
+    releaseDate:t.releaseDate, ytId:t.ytId, spUri:t.spUri, artworkBig:t.artworkBig };
 }
 function doubleTapLike(el, t){
   haptic(22);
@@ -1181,7 +1185,7 @@ function playCard(el){
   }
   clearTimeout(adTimer);
   if (el._ad){   // ad/notice card: pause music; ads auto-advance, notices wait for the user
-    current = el; player.pause(); ytStop();
+    current = el; player.pause(); ytStop(); try{ spPlayer?.pause(); }catch(e){}
     if (!el._stay){
       const p = el.querySelector(".progress");
       p.style.transition = "width 6s linear";
@@ -1203,11 +1207,15 @@ function playCard(el){
   $("#boot").classList.add("hide");
   recordRecent(el._track);
   if (el._track.ytId){
-    player.pause();
+    player.pause(); try{ spPlayer?.pause(); }catch(e){}
     ytPlay(el);
     el.classList.add("playing");
+  } else if (el._track.spUri){
+    player.pause(); ytStop();
+    spPlayTrack(el._track.spUri);
+    el.classList.add("playing");
   } else {
-    ytStop();
+    ytStop(); try{ spPlayer?.pause(); }catch(e){}
     updateMediaSession(el._track);
     player.src = el._track.previewUrl;
     player.play().then(() => el.classList.add("playing")).catch(()=>{});
@@ -1217,7 +1225,7 @@ function playCard(el){
 }
 
 player.addEventListener("timeupdate", () => {
-  if (!current || !player.duration || current._track?.ytId) return;
+  if (!current || !player.duration || current._track?.ytId || current._track?.spUri) return;
   const cap = continued ? player.duration : Math.min(HOOK_SECONDS, player.duration);
   current.querySelector(".progress").style.width = Math.min(100, player.currentTime / cap * 100) + "%";
   if (player.currentTime >= cap) next();
@@ -1248,7 +1256,8 @@ player.addEventListener("play", () => {
 // closing/leaving the site mid-session: mild negative for the current song and
 // the couple before it (they made the user leave); background listening is exempt
 addEventListener("pagehide", () => {
-  if (!player.paused) return;   // music still playing = background listening, not a leave signal
+  // still playing on any engine = background listening, not a leave signal
+  if (!player.paused || current?._track?.ytId || current?._track?.spUri) return;
   store.recentlyPlayed.slice(0, 3).forEach((t, i) => {
     bump(store.genres, t.primaryGenreName, -.5 / (i + 1));
     bump(store.artists, t.artistName, -.6 / (i + 1));
@@ -1276,11 +1285,16 @@ function ensureYT(cb){
   if (window._ytLoading) return;
   window._ytLoading = true;
   window.onYouTubeIframeAPIReady = () => {
+    // origin must be sent explicitly or YouTube throws error 153 (invalid referrer);
+    // only works over http(s) — file:// cannot embed YouTube at all
+    const pv = { autoplay:1, playsinline:1, rel:0 };
+    if (location.origin.startsWith("http")) pv.origin = location.origin;
     ytPlayer = new YT.Player("ytFrame", {
       width:"100%", height:"100%",
-      playerVars:{ autoplay:1, playsinline:1, rel:0 },
+      playerVars: pv,
       events:{
         onReady: () => { ytReadyCbs.forEach(f => f()); ytReadyCbs = []; },
+        onError: () => { toast("Video unavailable — skipping"); next(); },   // embed-blocked videos don't stall the feed
         onStateChange: e => {
           if (e.data === YT.PlayerState.ENDED) next();
           if (e.data === YT.PlayerState.PLAYING){ current?.classList.add("playing"); current?.classList.remove("paused"); startYtProgress(); }
@@ -1327,9 +1341,142 @@ addEventListener("resize", positionYtHolder);
 function engineToggle(){
   if (current?._track?.ytId && ytPlayer){
     ytPlayer.getPlayerState() === 1 ? ytPlayer.pauseVideo() : ytPlayer.playVideo();
+  } else if (current?._track?.spUri && spPlayer){
+    spPlayer.togglePlay();
   } else {
     player.paused ? player.play() : player.pause();
   }
+}
+
+/* ---------- spotify engine: PKCE login (no server secret), taste import, full-song playback ----------
+   Setup (site owner, once): developer.spotify.com/dashboard → Create app →
+   add this site's URL as a Redirect URI → paste the Client ID below. */
+const SPOTIFY_CLIENT_ID = "";   // ← paste your Spotify app Client ID before deploying
+const SP_REDIRECT = location.origin + location.pathname;
+store.spTokens ||= null;
+
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+async function spConnect(){
+  if (!SPOTIFY_CLIENT_ID) return toast("Spotify isn't configured on this site yet");
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  localStorage.setItem("sp_verifier", verifier);
+  const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  location.href = "https://accounts.spotify.com/authorize?" + new URLSearchParams({
+    client_id: SPOTIFY_CLIENT_ID, response_type:"code", redirect_uri: SP_REDIRECT,
+    scope:"streaming user-read-email user-read-private user-top-read user-library-read",
+    code_challenge_method:"S256", code_challenge:challenge, state:"spotify",
+  });
+}
+async function spToken(body){
+  const r = await fetch("https://accounts.spotify.com/api/token", {
+    method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id:SPOTIFY_CLIENT_ID, ...body }),
+  });
+  if (!r.ok) throw new Error("spotify auth");
+  const j = await r.json();
+  store.spTokens = { access:j.access_token, refresh:j.refresh_token || store.spTokens?.refresh,
+    exp: Date.now() + (j.expires_in - 60) * 1000 };
+  save();
+}
+async function spAccess(){
+  if (!store.spTokens) throw new Error("not connected");
+  if (Date.now() > store.spTokens.exp)
+    await spToken({ grant_type:"refresh_token", refresh_token:store.spTokens.refresh });
+  return store.spTokens.access;
+}
+async function spFetch(path){
+  const r = await fetch("https://api.spotify.com/v1" + path, { headers:{ Authorization:"Bearer " + await spAccess() } });
+  if (!r.ok) throw new Error("spotify api " + r.status);
+  return r.json();
+}
+// returning from the Spotify login redirect
+(async () => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("state") === "spotify" && q.get("code")){
+    history.replaceState(null, "", location.pathname);
+    try {
+      await spToken({ grant_type:"authorization_code", code:q.get("code"), redirect_uri:SP_REDIRECT,
+        code_verifier: localStorage.getItem("sp_verifier") || "" });
+      toast("Spotify connected 🎧");
+      importSpotifyTaste();
+    } catch(e){ toast("Spotify connect failed — try again"); }
+  }
+})();
+// the "proper data": the user's actual Spotify listening history trains the model instantly
+async function importSpotifyTaste(){
+  try {
+    const arts = await spFetch("/me/top/artists?limit=20");
+    (arts.items || []).forEach(a => bump(store.artists, a.name, 5));
+    const tops = await spFetch("/me/top/tracks?limit=30");
+    (tops.items || []).forEach(tr => {
+      bump(store.artists, tr.artists?.[0]?.name, 2);
+      const dec = trackDecade({ releaseDate: tr.album?.release_date });
+      if (dec) bump(store.eras, dec, .8);
+    });
+    store.interactions += 20;   // real history = well past the bootstrap phase
+    save();
+    toast("Learned your Spotify taste ♥");
+  } catch(e){}
+}
+
+/* spotify playback via Web Playback SDK — full songs, needs Premium */
+let spPlayer = null, spDeviceId = null, spEndGuard = 0;
+function ensureSpotifyPlayer(cb){
+  if (spDeviceId) return cb && cb();
+  if (window._spLoading) return;
+  window._spLoading = true;
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    spPlayer = new Spotify.Player({ name:"Hooked", volume: store.volume / 100,
+      getOAuthToken: async f => f(await spAccess()) });
+    spPlayer.addListener("ready", e => { spDeviceId = e.device_id; cb && cb(); });
+    spPlayer.addListener("account_error", () => {   // free account — playback impossible, taste import still done
+      toast("Spotify Premium is needed for playback — switching back to Apple");
+      store.engine = "apple"; save(); renderEngineRow(); resetUpcoming(); ensureAhead();
+    });
+    spPlayer.addListener("player_state_changed", st => {
+      if (!st || !current?._track?.spUri) return;
+      if (st.duration) current.querySelector(".progress").style.width = (st.position / st.duration * 100) + "%";
+      current.classList.toggle("paused", st.paused && st.position > 0);
+      // standard SDK end-of-track detection
+      if (st.paused && st.position === 0 && st.track_window?.previous_tracks?.length && Date.now() - spEndGuard > 4000){
+        spEndGuard = Date.now(); next();
+      }
+    });
+    spPlayer.connect();
+  };
+  const s = document.createElement("script");
+  s.src = "https://sdk.scdn.co/spotify-player.js";
+  document.head.appendChild(s);
+}
+function spPlayTrack(uri){
+  ensureSpotifyPlayer(async () => {
+    try {
+      spPlayer.activateElement?.();   // mobile playback unlock
+      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spDeviceId}`, {
+        method:"PUT",
+        headers:{ Authorization:"Bearer " + await spAccess(), "Content-Type":"application/json" },
+        body: JSON.stringify({ uris:[uri] }),
+      });
+      current?.classList.add("playing");
+    } catch(e){ toast("Playback failed — is this account Premium?"); }
+  });
+}
+async function spSearch(term){
+  const key = "sp|" + term;
+  const hit = seedCache.get(key);
+  if (hit && Date.now() - hit.ts < 600000) return hit.tracks;
+  const j = await spFetch("/search?type=track&limit=25&q=" + encodeURIComponent(term));
+  const tracks = (j.tracks?.items || []).map(tr => ({
+    trackId:"sp_" + tr.id, spUri:tr.uri,
+    trackName:tr.name, artistName:tr.artists?.[0]?.name || "",
+    artworkUrl100: tr.album?.images?.at(-1)?.url || "",
+    artworkBig: tr.album?.images?.[0]?.url || "",
+    primaryGenreName:"Spotify",
+    previewUrl:"", trackViewUrl: tr.external_urls?.spotify || "",
+    releaseDate: tr.album?.release_date,
+  }));
+  seedCache.set(key, { tracks, ts: Date.now() });
+  return tracks;
 }
 
 /* lock-screen / background media controls */
@@ -1817,8 +1964,9 @@ $("#dailyBtn").onclick = async () => {
 
 /* ---------- music source engine picker ---------- */
 const ENGINES = {
-  apple:   { label:"Apple — instant hooks",       note:"Fast 20s previews, unlimited discovery" },
-  youtube: { label:"YouTube — full songs + video", note:"Full tracks with video · ~100 searches/day per key" },
+  apple:   { label:"Apple — instant hooks",        note:"Fast 20s previews, unlimited discovery" },
+  youtube: { label:"YouTube — full songs + video",  note:"Full tracks with video · ~100 searches/day per key" },
+  spotify: { label:"Spotify — full songs (login)",  note:"Full tracks via your Spotify account · Premium needed to play" },
 };
 function renderEngineRow(){
   const row = $("#engineRow"); row.innerHTML = "";
@@ -1833,6 +1981,7 @@ function renderEngineRow(){
         toast("Paste your YouTube API key first");
         return;
       }
+      if (k === "spotify" && !store.spTokens){ spConnect(); return; }   // sends them to Spotify login, comes back connected
       store.engine = k; save();
       renderEngineRow(); toast(e.note);
       resetUpcoming(); ensureAhead();
@@ -1878,6 +2027,8 @@ $("#volBtn").onclick = () => $("#volWrap").classList.toggle("open");
 $("#volSlider").oninput = e => {
   store.volume = +e.target.value;
   player.volume = store.volume / 100;
+  try{ ytPlayer?.setVolume?.(store.volume); }catch(_){}
+  try{ spPlayer?.setVolume?.(store.volume / 100); }catch(_){}
   $("#volBtn").innerHTML = volIcon(store.volume);
   save();
 };
